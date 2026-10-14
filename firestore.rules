@@ -1,0 +1,57 @@
+rules_version = '2';
+// Severo · regras do Firestore
+// Motorista: lê e altera só o que é dele. Equipe (coleção usuarios): opera a central.
+// Valores internos (valor do cliente, margem, notas) ficam em "atendimentos", que o motorista não lê.
+service cloud.firestore {
+  match /databases/{db}/documents {
+    function logado() { return request.auth != null; }
+    function eu() { return request.auth.uid; }
+    function equipe() { return logado() && exists(/databases/$(db)/documents/usuarios/$(eu())); }
+    function papel() { return get(/databases/$(db)/documents/usuarios/$(eu())).data.papel; }
+    function gestao() { return equipe() && papel() == 'gestao'; }
+
+    match /usuarios/{uid} {
+      allow read: if logado() && (eu() == uid || equipe());
+      allow write: if gestao();
+    }
+
+    match /motoristas/{uid} {
+      allow read: if logado() && (eu() == uid || equipe());
+      allow create: if logado() && eu() == uid && request.resource.data.cadastro == 'pendente';
+      allow update: if equipe()
+        || (logado() && eu() == uid && !request.resource.data.diff(resource.data).affectedKeys().hasAny(['cadastro']));
+    }
+
+    match /veiculos/{id} {
+      allow read: if logado() && (resource.data.motoristaId == eu() || equipe());
+      allow create: if logado() && request.resource.data.motoristaId == eu();
+      allow update: if equipe()
+        || (logado() && resource.data.motoristaId == eu() && request.resource.data.motoristaId == eu());
+    }
+
+    match /disponibilidades/{id} {
+      allow read: if logado() && (resource.data.motoristaId == eu() || equipe());
+      allow create: if logado()
+        && request.resource.data.motoristaId == eu()
+        && request.resource.data.status == 'disponivel'
+        && request.resource.data.responsavelId == null;
+      allow update: if equipe()
+        || (logado() && resource.data.motoristaId == eu()
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+                 'motoristaNome','telefone','veiculoId','veiculo','cidade','uf','lat','lng','localEm','quando',
+                 'ocupacao','capacidadeLivreKg','destinos','aceitaOutras','obs','audioUrl','expiraEm',
+                 'atualizadoEm','historico','status'])
+            && (request.resource.data.status == resource.data.status || request.resource.data.status == 'cancelado'));
+      allow delete: if gestao();
+    }
+
+    // áudios salvos sem Storage (plano gratuito)
+    match /audios/{dispId} {
+      allow read: if logado() && (resource.data.motoristaId == eu() || equipe());
+      allow create, update: if logado() && request.resource.data.motoristaId == eu();
+    }
+
+    match /atendimentos/{id} { allow read, write: if equipe(); }
+    match /cargas/{id}       { allow read, write: if equipe(); }
+  }
+}
