@@ -10,12 +10,12 @@
  */
 window.SEVERO_CONFIG = {
   firebase: {
-    apiKey: "AIzaSyBsDfa-FRapO4-cYFYzdE20HLhoOBJ5ewQ",
-    authDomain: "severo-app-2074f.firebaseapp.com",
-    projectId: "severo-app-2074f",
-    storageBucket: "severo-app-2074f.firebasestorage.app",
-    messagingSenderId: "990494820207",
-    appId: "1:990494820207:web:5e974197f7513bf85c0a9a"
+    apiKey: "",
+    authDomain: "",
+    projectId: "",
+    storageBucket: "",
+    messagingSenderId: "",
+    appId: ""
   },
 
   // Áudios no Firebase Storage (exige plano Blaze).

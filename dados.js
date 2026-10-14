@@ -186,14 +186,14 @@
 
   /* ---------- motor Firebase ---------- */
   async function motorFirebase(nomeApp) {
-    for (const f of ['firebase-app-compat.js', 'firebase-auth-compat.js', 'firebase-firestore-compat.js', 'firebase-storage-compat.js']) {
-      await carregarScript(FB + f);
-    }
+    const sdks = ['firebase-app-compat.js', 'firebase-auth-compat.js', 'firebase-firestore-compat.js'];
+    if (cfg.usarStorage) sdks.push('firebase-storage-compat.js');
+    for (const f of sdks) await carregarScript(FB + f);
     // apps com nomes diferentes = sessões separadas para motorista e painel no mesmo navegador
     const app = firebase.initializeApp(cfg.firebase, nomeApp);
     const auth = app.auth();
     const db = app.firestore();
-    const st = app.storage();
+    const st = cfg.usarStorage ? app.storage() : null;
     try { await db.enablePersistence({ synchronizeTabs: true }); } catch (e) { /* outra aba já habilitou */ }
     await new Promise((ok) => { const parar = auth.onAuthStateChanged(() => { parar(); ok(); }); });
 
@@ -233,10 +233,17 @@
           (e) => console.error('[Severo] leitura de ' + c, e)
         );
       },
-      async enviarArquivo(caminho, blob) {
-        const ref = st.ref(caminho);
-        await ref.put(blob, { contentType: blob.type || 'audio/webm' });
-        return ref.getDownloadURL();
+      async enviarArquivo(caminho, blob, meta) {
+        if (st) {
+          const ref = st.ref(caminho);
+          await ref.put(blob, { contentType: blob.type || 'audio/webm' });
+          return ref.getDownloadURL();
+        }
+        // plano gratuito: áudio vai como texto para a coleção "audios" (limite de 1 MB por documento)
+        const dados = await paraDataUrl(blob);
+        if (dados.length > 900000) throw new Error('Áudio muito longo. Grave até 1 minuto.');
+        await col('audios').doc(meta.dispId).set({ motoristaId: meta.motoristaId, dados: dados, tipo: blob.type || '', em: agora() });
+        return 'fs:' + meta.dispId;
       },
       async motoristaId(criar) {
         if (auth.currentUser) return auth.currentUser.uid;
@@ -307,7 +314,7 @@
       let audioUrl = ativo ? (ativo.audioUrl || null) : null;
       if (p.audio) {
         const ext = /mp4|aac/.test(p.audio.type) ? 'm4a' : /ogg/.test(p.audio.type) ? 'ogg' : 'webm';
-        audioUrl = await M.enviarArquivo('audios/' + p.motorista.id + '/' + id + '-' + agora() + '.' + ext, p.audio);
+        audioUrl = await M.enviarArquivo('audios/' + p.motorista.id + '/' + id + '-' + agora() + '.' + ext, p.audio, { motoristaId: p.motorista.id, dispId: id });
       }
       const v = p.veiculo;
       const base = {
@@ -351,6 +358,13 @@
         status: 'cancelado', atualizadoEm: agora(),
         historico: (x.historico || []).concat(evento('Motorista cancelou o pedido', null, 'motorista'))
       }));
+    },
+
+    /** Endereço tocável do áudio (busca no Firestore quando salvo sem Storage). */
+    async audio(url) {
+      if (!url || url.indexOf('fs:') !== 0) return url;
+      const a = await M.obter('audios', url.slice(3));
+      return a ? a.dados : null;
     },
 
     /* ----- central ----- */

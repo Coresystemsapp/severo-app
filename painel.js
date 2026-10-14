@@ -322,7 +322,7 @@
       (d.obs ? '<div class="largo"><dt>Observações do motorista</dt><dd>' + esc(d.obs) + '</dd></div>' : '') +
       '</dl>' +
 
-      (d.audioUrl ? '<div class="det-sec det-audio"><h3>Áudio do motorista</h3><audio controls preload="none" src="' + esc(d.audioUrl) + '"></audio></div>' : '') +
+      (d.audioUrl ? '<div class="det-sec det-audio"><h3>Áudio do motorista</h3><audio controls preload="none" id="audio-det"' + (d.audioUrl.indexOf('fs:') === 0 ? '' : ' src="' + esc(d.audioUrl) + '"') + '></audio></div>' : '') +
       (acoes ? '<div class="det-sec"><h3>Próximo passo</h3><div class="det-acoes">' + acoes + '</div></div>' : '') +
       negHtml + matches +
 
@@ -332,6 +332,12 @@
       '<ul class="hist">' + hist.map((h) => '<li class="' + esc(h.tipo) + '"><div>' + esc(h.texto) + (h.interno ? '<span class="interno">interno</span>' : '') + '</div>' +
         '<div class="q">' + new Date(h.em).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }) + (h.por ? ' · ' + esc(h.por.nome) : h.tipo === 'motorista' ? ' · motorista' : '') + '</div></li>').join('') + '</ul></div>';
 
+    if (d.audioUrl && d.audioUrl.indexOf('fs:') === 0) {
+      P.audios = P.audios || {};
+      const tocar = (src) => { const el2 = $('#audio-det'); if (el2 && src) el2.src = src; };
+      if (P.audios[d.audioUrl]) tocar(P.audios[d.audioUrl]);
+      else SV.audio(d.audioUrl).then((src) => { P.audios[d.audioUrl] = src; tocar(src); }).catch(() => aviso('Não foi possível carregar o áudio.', true));
+    }
     const n2 = $('#anotar-txt'); n2.value = notaTxt; if (notaFoco) n2.focus();
     $('#f-anotar').addEventListener('submit', async (e) => {
       e.preventDefault();

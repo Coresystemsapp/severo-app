@@ -432,7 +432,10 @@
     try { stream = await navigator.mediaDevices.getUserMedia({ audio: true }); }
     catch (e) { return aviso('Libere o microfone para gravar o áudio.', true); }
     const tipo = ['audio/webm;codecs=opus', 'audio/webm', 'audio/mp4', 'audio/ogg'].find((t) => MediaRecorder.isTypeSupported && MediaRecorder.isTypeSupported(t)) || '';
-    const rec = new MediaRecorder(stream, tipo ? { mimeType: tipo } : undefined);
+    const opcoes = { audioBitsPerSecond: 24000 };
+    if (tipo) opcoes.mimeType = tipo;
+    let rec;
+    try { rec = new MediaRecorder(stream, opcoes); } catch (e) { rec = new MediaRecorder(stream); }
     const partes = [];
     rec.ondataavailable = (e) => { if (e.data && e.data.size) partes.push(e.data); };
     rec.onstop = () => {
@@ -470,7 +473,8 @@
       if (!E.grav) return;
       const s = Math.floor((Date.now() - E.grav.inicio) / 1000);
       const t = $('#tempo'); if (t) t.textContent = Math.floor(s / 60) + ':' + String(s % 60).padStart(2, '0');
-      if (s >= 90) { pararGravacao(); aviso('Áudio limitado a 1 min e 30 s.'); }
+      const limite = C.usarStorage ? 90 : 60;
+      if (s >= limite) { pararGravacao(); aviso('Áudio limitado a ' + (limite === 60 ? '1 minuto' : '1 min e 30 s') + '.'); }
     }, 250);
   }
   function pararGravacao(descartar) {
