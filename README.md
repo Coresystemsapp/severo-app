@@ -7,25 +7,22 @@ Web app (PWA) para agregados e freteiros avisarem que estão vazios, e painel da
 
 ## Estrutura
 
-```
-index.html            app do motorista
-painel.html           central
-css/severo.css        identidade visual (asfalto, laranja de sinalização, escudos de UF)
-js/config.js          credenciais do Firebase e parâmetros (validade 12 h, meta 15 min, WhatsApp da central)
-js/dados.js           camada de dados: modo demo (navegador) e Firebase com a mesma API
-js/motorista.js       cadastro, veículos, pedido, áudio, localização, fila offline, acompanhamento
-js/painel.js          fila, atendimento, proposta, recusa, fechamento, cargas, sugestões, indicadores, exportação
-sw.js                 service worker (abre sem sinal)
-firestore.rules       permissões por função
-storage.rules         áudios
-vercel.json           rotas limpas e permissões de microfone/localização
-```
+Todos os arquivos ficam na raiz do repositório (facilita o upload pelo site do GitHub).
 
-Sem build, sem framework. Firebase via SDK compat (CDN), carregado só quando configurado.
+```
+index.html  painel.html          app do motorista e central
+severo.css                       visual
+config.js                        Firebase e parâmetros
+dados.js                         camada de dados (demo e Firebase)
+motorista.js  painel.js  icones.js
+sw.js  manifest.webmanifest      funcionamento offline e instalação
+logo-severo.png  icon-192.png  icon-512.png
+firestore.rules  storage.rules  vercel.json
+```
 
 ## Testar agora (modo demonstração)
 
-Com `apiKey` vazio em `js/config.js`, tudo roda no navegador:
+Com `apiKey` vazio em `config.js`, tudo roda no navegador:
 
 ```bash
 npx serve .        # ou: python3 -m http.server 8080
@@ -44,7 +41,7 @@ Para testar a fila sem sinal: DevTools > Network > Offline, envie um pedido, vol
 3. **Firestore** e **Storage**: crie e publique `firestore.rules` e `storage.rules`.
 4. Crie os usuários da equipe em Authentication e, para cada um, um documento `usuarios/{uid}`:
    `{ "nome": "Fulano", "papel": "gestao" }` — papéis: `operador`, `gestao`, `financeiro`.
-5. Cole o `firebaseConfig` em `js/config.js`.
+5. Cole o `firebaseConfig` em `config.js`.
    *Storage é opcional:* com `usarStorage: false` (padrão) os áudios vão para o Firestore e tudo roda no plano gratuito, com áudio de até 1 minuto. Ao contratar o Blaze, ative o Storage, publique `storage.rules` e troque para `true`.
 6. Authentication > Configurações > Domínios autorizados: adicione o domínio do Vercel.
 
