@@ -12,10 +12,13 @@
   const P = {
     op: null, fila: [], atend: {}, cargas: [],
     sel: null, selCarga: null, aba: 'fila',
-    f: { grupo: 'ativos', busca: '', uf: '', carroceria: '', destino: '', meus: false },
-    vistos: null, parar: []
+    f: { grupo: 'ativos', busca: '', uf: '', carroceria: '', destino: '', meus: false, ordem: 'espera' },
+    vistos: null, parar: [], statusAnt: null, usuarios: [], acessos: [], motoristas: [], veiculos: [], adm: 'geral', buscaMot: '', interesses: [], intVistos: null, sincronizadas: {}
   };
-  const veGestao = () => P.op && (P.op.papel === 'gestao' || P.op.papel === 'financeiro');
+  const papel = () => (P.op && P.op.papel) || '';
+  const ehAdmin = () => papel() === 'admin';
+  const ehGestao = () => papel() === 'gestao' || papel() === 'admin';
+  const soCargas = () => papel() === 'operacoes';
 
   /* ---------- aviso ---------- */
   let tAviso;
@@ -47,7 +50,7 @@
       (demo
         ? '<p class="sub">Modo demonstração. Os dados ficam neste navegador. Abra o app do motorista em outra aba para ver os pedidos chegando ao vivo.</p>' +
           '<label class="campo"><span>Seu nome</span><input name="nome" required autocomplete="name"></label>' +
-          '<label class="campo"><span>Função</span><select name="papel"><option value="operador">Operador</option><option value="gestao">Gestão</option><option value="financeiro">Financeiro</option></select></label>'
+          '<label class="campo"><span>Função</span><select name="papel">' + Object.keys(SV.PAPEIS).map((k) => '<option value="' + k + '"' + (k === 'admin' ? ' selected' : '') + '>' + SV.PAPEIS[k] + '</option>').join('') + '</select></label>'
         : '<p class="sub">Entre com o acesso liberado pela gestão.</p>' +
           '<label class="campo"><span>E-mail</span><input name="email" type="email" required autocomplete="username"></label>' +
           '<label class="campo"><span>Senha</span><input name="senha" type="password" required autocomplete="current-password"></label>') +
@@ -77,30 +80,63 @@
   /* ---------- estrutura ---------- */
   function montar() {
     const demo = SV.modo === 'demo';
-    const papel = { operador: 'Operador', gestao: 'Gestão', financeiro: 'Financeiro' }[P.op.papel] || P.op.papel;
+    const rotPapel = SV.PAPEIS[P.op.papel] || P.op.papel;
+    if (soCargas()) P.aba = 'cargas';
+    if (P.aba === 'admin' && !ehAdmin()) P.aba = 'fila';
     raiz.innerHTML = '<div class="pn">' +
       '<aside class="pn-lado">' +
       '<img class="logo" src="logo-severo.png" alt="Severo Transportes">' +
-      '<button class="pn-nav" data-aba="fila">Fila de motoristas <span class="cont" id="cont-fila"></span></button>' +
+      (soCargas() ? '' : '<button class="pn-nav" data-aba="fila">Fila de motoristas <span class="cont" id="cont-fila"></span></button>') +
       '<button class="pn-nav" data-aba="cargas">Cargas <span class="cont" id="cont-cargas" style="background:var(--cabine-3);color:var(--texto-2)"></span></button>' +
-      '<button class="pn-nav" data-acao="exportar">Exportar planilha</button>' +
+      (ehAdmin() ? '<button class="pn-nav" data-aba="admin">Administração <span class="cont" id="cont-online" style="background:var(--verde-tinta);color:var(--verde)"></span></button>' : '') +
+      (soCargas() ? '' : '<button class="pn-nav" data-acao="exportar">Exportar planilha</button>') +
       '<div class="fim">' +
       (demo ? '<div class="selo-demo">Modo demonstração. Configure o Firebase em config.js para usar de verdade.</div>' +
         '<button class="btn btn-p" data-acao="semear">Gerar dados de exemplo</button>' +
         '<button class="btn btn-p btn-fantasma" data-acao="limpar">Limpar demonstração</button>' +
         '<a class="btn btn-p btn-fantasma" href="./" target="_blank" rel="noopener">Abrir app do motorista</a>' : '') +
-      '<div class="pn-op"><b>' + esc(P.op.nome) + '</b><span>' + esc(papel) + '</span></div>' +
+      '<div class="pn-op"><b>' + esc(P.op.nome) + '</b><span>' + esc(rotPapel) + (P.op.email ? '<br>' + esc(P.op.email) : '') + '</span></div>' +
       '<button class="btn btn-p btn-fantasma" data-acao="sair">' + IC.sair + 'Sair</button>' +
       '</div></aside>' +
       '<main class="pn-main"><div class="pn-kpis" id="kpis"></div><div class="pn-corpo" id="corpo"></div></main>' +
       '</div>';
     trocarAba(P.aba);
     P.parar.forEach((f) => f());
+    clearInterval(P.tPresenca);
+    SV.presenca(P.op, true).catch(() => {});
+    P.tPresenca = setInterval(() => { if (P.op) SV.presenca(P.op).catch(() => {}); }, 120000);
+    const obsCargas = SV.observarCargas((l) => {
+        P.cargas = l.sort((a, b) => (a.dataCarregamento || 0) - (b.dataCarregamento || 0));
+        if (!soCargas()) l.filter((c) => c.publicada !== 2 && !P.sincronizadas[c.id]).forEach((c) => { P.sincronizadas[c.id] = 1; SV.salvarCarga(c).catch(() => {}); });
+        atualizar();
+      });
+    if (soCargas()) { P.parar = [obsCargas]; return; }
     P.parar = [
+      obsCargas,
       SV.observarFila((l) => { novosPedidos(l); P.fila = l; atualizar(); }),
       SV.observarAtendimentos((l) => { P.atend = {}; l.forEach((a) => { P.atend[a.id] = a; }); atualizar(); }),
-      SV.observarCargas((l) => { P.cargas = l.sort((a, b) => (a.dataCarregamento || 0) - (b.dataCarregamento || 0)); atualizar(); })
+      SV.observarInteresses((l) => {
+        if (P.intVistos) {
+          const novo = l.find((i) => !P.intVistos.has(i.id));
+          if (novo) {
+            const c = P.cargas.find((x) => x.id === novo.cargaId);
+            aviso(novo.motoristaNome + (novo.valorPedido ? ' quer negociar a carga' : ' tem interesse na carga') + (c ? ' ' + c.origemUF + ' → ' + c.destinoUF : '') + (novo.valorPedido ? ': pede ' + U.moeda(novo.valorPedido) : '') + '.');
+            bipe();
+          }
+        }
+        P.intVistos = new Set(l.map((i) => i.id));
+        P.interesses = l.sort((a, b) => b.em - a.em);
+        atualizar();
+      })
     ];
+    if (ehAdmin()) {
+      P.parar.push(
+        SV.observarUsuarios((l) => { P.usuarios = l; atualizar(); }),
+        SV.observarAcessos((l) => { P.acessos = l; if (P.aba === 'admin') desenharAdmin(); }),
+        SV.observarMotoristas((l) => { P.motoristas = l; if (P.aba === 'admin') desenharAdmin(); }),
+        SV.observarTodosVeiculos((l) => { P.veiculos = l; if (P.aba === 'admin') desenharAdmin(); })
+      );
+    }
   }
 
   function novosPedidos(l) {
@@ -114,6 +150,18 @@
       }
     }
     P.vistos = ids;
+    // resposta do motorista pelo app
+    if (P.statusAnt) {
+      l.forEach((d) => {
+        const antes = P.statusAnt[d.id];
+        if (antes === 'proposta_enviada' && d.respostaMotorista && Date.now() - d.respostaMotorista.em < 120000) {
+          if (d.status === 'aguardando_aprovacao') { aviso(d.motoristaNome + ' aceitou a proposta pelo app.'); bipe(); }
+          else if (d.status === 'em_atendimento') { aviso(d.motoristaNome + ' recusou a proposta: ' + d.respostaMotorista.motivo + '.', true); bipe(); }
+        }
+        if (antes === 'proposta_enviada' && d.status === 'contraproposta' && d.contraproposta) { aviso(d.motoristaNome + ' quer negociar: pede ' + U.moeda(d.contraproposta.valor) + '.'); bipe(); }
+      });
+    }
+    P.statusAnt = {}; l.forEach((d) => { P.statusAnt[d.id] = d.status; });
   }
 
   function trocarAba(aba) {
@@ -121,6 +169,7 @@
     P.assinDet = null;
     $$('.pn-nav[data-aba]').forEach((b) => b.setAttribute('aria-current', b.dataset.aba === aba ? 'page' : 'false'));
     const corpo = $('#corpo');
+    corpo.classList.toggle('unica', aba === 'admin');
     if (aba === 'fila') {
       const opt = (lista, v, rot) => '<option value="">' + rot + '</option>' + lista.map((x) => '<option' + (x === v ? ' selected' : '') + '>' + x + '</option>').join('');
       corpo.innerHTML = '<section class="pn-coluna">' +
@@ -131,6 +180,8 @@
         '<select class="entrada" id="f-uf" aria-label="UF onde está">' + opt(SV.UFS.slice().sort(), P.f.uf, 'Está em') + '</select>' +
         '<select class="entrada" id="f-destino" aria-label="Destino desejado">' + opt(SV.UFS.slice().sort(), P.f.destino, 'Quer ir para') + '</select>' +
         '<select class="entrada" id="f-carroceria" aria-label="Carroceria">' + opt(SV.CARROCERIAS, P.f.carroceria, 'Carroceria') + '</select>' +
+        '<select class="entrada" id="f-ordem" aria-label="Ordenar fila">' + [['espera', 'Ordem: esperando há mais tempo'], ['recentes', 'Ordem: mais recentes'], ['carregar', 'Ordem: carrega primeiro'], ['vence', 'Ordem: vence primeiro'], ['capacidade', 'Ordem: maior capacidade'], ['cidade', 'Ordem: cidade (A–Z)'], ['situacao', 'Ordem: situação']]
+          .map((o) => '<option value="' + o[0] + '"' + (P.f.ordem === o[0] ? ' selected' : '') + '>' + o[1] + '</option>').join('') + '</select>' +
         '<label class="miudo" style="display:flex;gap:6px;align-items:center"><input type="checkbox" id="f-meus"' + (P.f.meus ? ' checked' : '') + '> Só os meus</label>' +
         '</div><div class="pn-lista" id="lista"></div></section>' +
         '<section class="pn-detalhe" id="detalhe"></section>';
@@ -141,12 +192,14 @@
         desenharLista();
       });
       $('#f-busca').addEventListener('input', (e) => { P.f.busca = e.target.value; desenharLista(); });
-      ['uf', 'destino', 'carroceria'].forEach((k) => $('#f-' + k).addEventListener('change', (e) => { P.f[k] = e.target.value; desenharLista(); }));
+      ['uf', 'destino', 'carroceria', 'ordem'].forEach((k) => $('#f-' + k).addEventListener('change', (e) => { P.f[k] = e.target.value; desenharLista(); }));
       $('#f-meus').addEventListener('change', (e) => { P.f.meus = e.target.checked; desenharLista(); });
+    } else if (aba === 'admin') {
+      corpo.innerHTML = '<section class="pn-admin" id="admin"></section>';
     } else {
       corpo.innerHTML = '<section class="pn-coluna">' +
-        '<div class="pn-filtros"><button class="btn btn-p btn-primario" data-acao="nova-carga">' + IC.mais + 'Nova carga</button>' +
-        '<span class="miudo">Cadastre a demanda do cliente e veja quem encaixa.</span></div>' +
+        '<div class="pn-filtros">' + (soCargas() ? '<span class="miudo">Cargas disponíveis na Severo. Acesso somente para consulta.</span>'
+          : '<button class="btn btn-p btn-primario" data-acao="nova-carga">' + IC.mais + 'Nova carga</button><span class="miudo">Cadastre a demanda e veja quem encaixa.</span>') + '</div>' +
         '<div class="pn-lista" id="lista-cargas"></div></section>' +
         '<section class="pn-detalhe" id="det-carga"></section>';
     }
@@ -157,19 +210,33 @@
     if (!P.op || !$('#kpis')) return;
     desenharKpis();
     const semResp = P.fila.filter((d) => SV.ATIVOS.includes(d.status) && !SV.vencida(d) && !d.responsavelId).length;
-    $('#cont-fila').textContent = semResp || '';
-    $('#cont-fila').style.display = semResp ? '' : 'none';
+    const cf = $('#cont-fila');
+    if (cf) { cf.textContent = semResp || ''; cf.style.display = semResp ? '' : 'none'; }
+    const co = $('#cont-online');
+    if (co) { const n = P.usuarios.filter(online).length; co.textContent = n ? n + ' on' : ''; co.style.display = n ? '' : 'none'; }
     const abertas = P.cargas.filter((c) => c.status === 'aberta').length;
     $('#cont-cargas').textContent = abertas || '';
     $('#cont-cargas').style.display = abertas ? '' : 'none';
     document.title = (semResp ? '(' + semResp + ') ' : '') + 'Central Severo';
     if (P.aba === 'fila') { desenharLista(); desenharDetalhe(); }
+    else if (P.aba === 'admin') desenharAdmin();
     else { desenharCargas(); desenharDetalheCarga(); }
   }
 
   /* ---------- indicadores ---------- */
   function desenharKpis() {
     const hoje = U.hojeInicio();
+    const k0 = (v, rot, cls) => '<div class="kpi ' + (cls || '') + '"><b>' + v + '</b><span>' + rot + '</span></div>';
+    if (soCargas()) {
+      const ab = P.cargas.filter((c) => c.status === 'aberta');
+      const amanha = hoje + 86400000;
+      $('#kpis').innerHTML = k0(ab.length, 'Cargas abertas') +
+        k0(ab.filter((c) => c.dataCarregamento >= hoje && c.dataCarregamento < amanha).length, 'Carregam hoje') +
+        k0(ab.filter((c) => c.dataCarregamento >= amanha && c.dataCarregamento < amanha + 86400000).length, 'Carregam amanhã') +
+        k0(P.cargas.filter((c) => c.status === 'fechada').length, 'Fechadas') +
+        k0(P.cargas.length, 'Total cadastradas');
+      return;
+    }
     const ativos = P.fila.filter((d) => SV.ATIVOS.includes(d.status) && !SV.vencida(d));
     const semResp = ativos.filter((d) => !d.responsavelId);
     const assumidosHoje = P.fila.filter((d) => d.assumidoEm && d.assumidoEm >= hoje);
@@ -201,16 +268,27 @@
       if (f.carroceria && (d.veiculo || {}).carroceria !== f.carroceria) return false;
       if (f.meus && d.responsavelId !== P.op.id) return false;
       if (b) {
-        const alvo = U.norm([d.motoristaNome, d.cidade, d.uf, (d.veiculo || {}).placa, d.telefone].join(' '));
+        const alvo = U.norm([d.motoristaNome, d.cidade, d.bairro, d.uf, (d.veiculo || {}).placa, d.telefone].join(' '));
         if (alvo.indexOf(b) < 0) return false;
       }
       return true;
     }).sort((a, z) => {
-      if (P.f.grupo === 'ativos') {
-        if (!a.responsavelId !== !z.responsavelId) return a.responsavelId ? 1 : -1;
-        return (a.criadoEm || 0) - (z.criadoEm || 0);
+      const cap = (d) => d.capacidadeLivreKg || (d.veiculo || {}).capacidadeKg || 0;
+      const ordemSit = ['disponivel', 'em_atendimento', 'proposta_enviada', 'aguardando_aprovacao', 'carga_fechada', 'carregado', 'vencida', 'sem_carga', 'cancelado'];
+      switch (P.f.ordem) {
+        case 'recentes': return (z.criadoEm || 0) - (a.criadoEm || 0);
+        case 'carregar': return ((a.quando || {}).em || 0) - ((z.quando || {}).em || 0);
+        case 'vence': return (a.expiraEm || 0) - (z.expiraEm || 0);
+        case 'capacidade': return cap(z) - cap(a);
+        case 'cidade': return (a.cidade || '').localeCompare(z.cidade || '', 'pt-BR') || (a.bairro || '').localeCompare(z.bairro || '', 'pt-BR');
+        case 'situacao': return ordemSit.indexOf(SV.statusEfetivo(a)) - ordemSit.indexOf(SV.statusEfetivo(z)) || (a.criadoEm || 0) - (z.criadoEm || 0);
+        default:
+          if (P.f.grupo === 'ativos') {
+            if (!a.responsavelId !== !z.responsavelId) return a.responsavelId ? 1 : -1;
+            return (a.criadoEm || 0) - (z.criadoEm || 0);
+          }
+          return (z.atualizadoEm || 0) - (a.atualizadoEm || 0);
       }
-      return (z.atualizadoEm || 0) - (a.atualizadoEm || 0);
     });
   }
 
@@ -228,7 +306,7 @@
       const st = SV.statusEfetivo(d), S = SV.STATUS[st], v = d.veiculo || {};
       const atrasado = SV.ATIVOS.includes(st) && !d.responsavelId && Date.now() - d.criadoEm > META_MIN * 60000;
       return '<button class="lf' + (atrasado ? ' atrasado' : '') + (st === 'vencida' ? ' apagado' : '') + '" data-sel="' + d.id + '" aria-current="' + (P.sel === d.id) + '">' +
-        '<div><div class="loc">' + esc(d.cidade || 'Local no áudio') + (d.uf ? '<span>' + esc(d.uf) + '</span>' : '') + '</div>' +
+        '<div><div class="loc">' + esc(d.cidade || 'Local no áudio') + (d.uf ? '<span>' + esc(d.uf) + (d.bairro ? ' · ' + esc(d.bairro) : '') + '</span>' : '') + '</div>' +
         '<div class="veic">' + esc(d.motoristaNome) + ' · ' + esc(v.tipo) + ' ' + esc(v.carroceria) + ' · ' + U.toneladas(d.capacidadeLivreKg || v.capacidadeKg) + '</div></div>' +
         '<div class="dir"><span class="etq ' + S.tom + '">' + S.rotulo + '</span><span class="resp">' + (d.responsavelNome ? esc(d.responsavelNome.split(' ')[0]) : 'Sem responsável') + '</span></div>' +
         '<div class="linha3">' + escudos(d) + '<span>' + U.desde(d.criadoEm) + '</span>' +
@@ -258,15 +336,23 @@
     const a = P.atend[d.id] || {};
     const st = SV.statusEfetivo(d), S = SV.STATUS[st], v = d.veiculo || {};
     const meu = d.responsavelId === P.op.id;
-    const pode = meu || P.op.papel === 'gestao';
+    const pode = meu || ehGestao();
     const idadeLocalH = (Date.now() - (d.localEm || d.criadoEm)) / 3600000;
     const zap = 'https://wa.me/' + U.whats(d.telefone) + '?text=' + encodeURIComponent('Olá, ' + (d.motoristaNome || '').split(' ')[0] + '! Aqui é ' + P.op.nome.split(' ')[0] + ', da Severo. Vi que você está disponível' + (d.cidade ? ' em ' + d.cidade + '/' + d.uf : '') + '.');
 
     let acoes = '';
     if (pode) {
-      if (st === 'em_atendimento') acoes = bt('proposta', 'Enviar proposta', 'btn-primario') + bt('sem-carga', 'Sem carga encontrada') + bt('cancelar', 'Cancelar', 'btn-fantasma btn-perigo');
-      else if (st === 'proposta_enviada') acoes = bt('aceitou', 'Motorista aceitou', 'btn-primario') + bt('recusou', 'Motorista recusou') + bt('proposta', 'Refazer proposta', 'btn-fantasma');
-      else if (st === 'aguardando_aprovacao') acoes = bt('fechar', 'Aprovar e fechar carga', 'btn-primario') + bt('recusou', 'Não aprovado / recusou');
+      const rm = d.respostaMotorista;
+      if (rm && !rm.aceita && st === 'em_atendimento') acoes = '<div class="det-alerta" style="width:100%;margin:0 0 6px">Motorista recusou pelo app ' + U.desde(rm.em) + ': ' + esc(rm.motivo) + (rm.obs ? ' · ' + esc(rm.obs) : '') + '</div>';
+      if (rm && rm.aceita && st === 'aguardando_aprovacao') acoes = '<div class="det-alerta" style="width:100%;margin:0 0 6px;color:var(--verde)">Motorista aceitou pelo app ' + U.desde(rm.em) + '. Confira os documentos e feche.</div>';
+      if (st === 'em_atendimento') acoes += bt('proposta', 'Enviar proposta', 'btn-primario') + bt('sem-carga', 'Sem carga encontrada') + bt('cancelar', 'Cancelar', 'btn-fantasma btn-perigo');
+      else if (st === 'proposta_enviada') acoes = '<span class="miudo" style="width:100%">Aguardando o motorista responder no app, ou registre a resposta dada por telefone:</span>' + bt('aceitou', 'Motorista aceitou', 'btn-primario') + bt('recusou', 'Motorista recusou') + bt('proposta', 'Refazer proposta', 'btn-fantasma');
+      else if (st === 'contraproposta') {
+        const cp = d.contraproposta || {};
+        acoes = '<div class="det-alerta" style="width:100%;margin:0 0 6px;color:var(--amarelo)">Motorista quer negociar: pede <b>' + U.moeda(cp.valor) + '</b>' + (d.proposta ? ' (proposta era ' + U.moeda(d.proposta.valorParceiro) + ')' : '') + (cp.mensagem ? ' · “' + esc(cp.mensagem) + '”' : '') + '</div>' +
+          bt('aceitar-contra', 'Aceitar ' + U.moeda(cp.valor), 'btn-primario') + bt('proposta', 'Fazer nova proposta') + bt('cancelar', 'Encerrar', 'btn-fantasma btn-perigo');
+      }
+      else if (st === 'aguardando_aprovacao') acoes += bt('fechar', 'Aprovar e fechar carga', 'btn-primario') + bt('recusou', 'Não aprovado / recusou');
       else if (st === 'carga_fechada') acoes = bt('carregado', 'Registrar carregamento', 'btn-primario');
       else if (st === 'vencida') acoes = '<span class="miudo">Aviso vencido. Ligue para confirmar; o motorista renova no app.</span> ' + bt('cancelar', 'Encerrar', 'btn-fantasma btn-perigo');
     }
@@ -278,10 +364,8 @@
     const neg = a.negociacao;
     const negHtml = neg ? '<div class="det-sec"><h3>Negociação <small>' + esc(neg.por || '') + ' · ' + U.desde(neg.em) + '</small></h3>' +
       '<dl class="det-grade">' +
-      '<div><dt>Repasse ao parceiro</dt><dd class="num">' + U.moeda(neg.repasse) + '</dd></div>' +
-      '<div><dt>Pedágio (separado)</dt><dd class="num">' + U.moeda(neg.pedagio) + '</dd></div>' +
-      (veGestao() ? '<div><dt>Valor do cliente</dt><dd class="num">' + U.moeda(neg.valorCliente) + '</dd></div>' +
-        '<div><dt>Diferença comercial</dt><dd class="num">' + U.moeda((neg.valorCliente || 0) - (neg.repasse || 0)) + '<div class="miudo">antes de impostos e custos</div></dd></div>' : '') +
+      '<div><dt>Frete ao motorista</dt><dd class="num">' + U.moeda(neg.repasse) + '</dd></div>' +
+      '<div><dt>Pedágio</dt><dd>' + (neg.pedagioIncluso ? 'Incluso no frete' : 'À parte' + (neg.pedagio ? ' · ' + U.moeda(neg.pedagio) : '')) + '</dd></div>' +
       '<div class="largo"><dt>Pagamento combinado</dt><dd>' + esc(neg.pagamento || '—') + '</dd></div>' +
       (neg.cargaRotulo ? '<div class="largo"><dt>Carga</dt><dd>' + esc(neg.cargaRotulo) + '</dd></div>' : '') +
       '</dl></div>' : '';
@@ -309,7 +393,7 @@
       '</div>' +
 
       '<dl class="det-grade">' +
-      '<div><dt>Onde está</dt><dd>' + esc(d.cidade || 'Informado no áudio') + (d.uf ? '/' + esc(d.uf) : '') +
+      '<div><dt>Onde está</dt><dd>' + (d.bairro ? esc(d.bairro) + '<br>' : '') + esc(d.cidade || 'Informado no áudio') + (d.uf ? '/' + esc(d.uf) : '') +
       (d.lat ? ' <a class="miudo" style="color:var(--azul)" target="_blank" rel="noopener" href="https://www.google.com/maps?q=' + d.lat + ',' + d.lng + '">mapa</a>' : '') +
       '<div class="miudo">informado ' + U.desde(d.localEm || d.criadoEm) + '</div>' +
       (idadeLocalH > 2 ? '<div class="det-alerta">Posição antiga: pode não ser onde ele está agora.</div>' : '') + '</dd></div>' +
@@ -361,16 +445,35 @@
   function desenharCargas() {
     const el = $('#lista-cargas'); if (!el) return;
     if (!P.cargas.length) { el.innerHTML = '<div class="pn-vazio">Nenhuma carga cadastrada. Cadastre a demanda do cliente e o sistema sugere os veículos que encaixam.</div>'; return; }
-    const ativos = P.fila.filter((d) => SV.ATIVOS.includes(d.status) && !SV.vencida(d));
-    el.innerHTML = '<table class="tabela"><thead><tr><th>Rota</th><th>Cliente</th><th>Peso</th><th>Situação</th><th>Encaixam</th></tr></thead><tbody>' +
+    const ativos = soCargas() ? [] : P.fila.filter((d) => SV.ATIVOS.includes(d.status) && !SV.vencida(d));
+    el.innerHTML = '<table class="tabela"><thead><tr><th>Rota</th><th>Cliente</th><th>Peso</th><th>Frete</th><th>Situação</th>' + (soCargas() ? '' : '<th>Encaixam</th><th>Interesse</th>') + '</tr></thead><tbody>' +
       P.cargas.map((c) => {
         const n = ativos.filter((d) => SV.compatibilidade(d, c).ok).length;
         return '<tr class="clicavel" data-carga="' + c.id + '" aria-current="' + (P.selCarga === c.id) + '">' +
           '<td><b>' + esc(c.origemUF) + ' → ' + esc(c.destinoUF) + '</b><div class="miudo">' + esc(c.origemCidade) + ' → ' + esc(c.destinoCidade) + '</div></td>' +
           '<td>' + esc(c.cliente) + '</td><td class="num">' + U.toneladas(c.pesoKg) + '</td>' +
+          '<td class="num">' + (c.valorOferecido ? U.moeda(c.valorOferecido) + '<div class="miudo">' + (c.pedagioIncluso ? 'c/ pedágio' : 's/ pedágio') + '</div>' : '<span class="miudo">a combinar</span>') + '</td>' +
           '<td><span class="etq ' + (c.status === 'aberta' ? 'azul' : c.status === 'fechada' ? 'verde' : 'cinza') + '">' + ({ aberta: 'Aberta', fechada: 'Fechada', cancelada: 'Cancelada' }[c.status] || c.status) + '</span></td>' +
-          '<td class="num">' + (c.status === 'aberta' ? n : '—') + '</td></tr>';
+          (soCargas() ? '</tr>' : '<td class="num">' + (c.status === 'aberta' ? n : '—') + '</td>' +
+          '<td class="num">' + (function () { const q = P.interesses.filter((i) => i.cargaId === c.id && i.status !== 'descartado'); const novos = q.filter((i) => i.status === 'novo').length; return q.length ? q.length + (novos ? ' <span class="etq laranja">' + novos + ' novo' + (novos > 1 ? 's' : '') + '</span>' : '') : '—'; })() + '</td></tr>');
       }).join('') + '</tbody></table>';
+  }
+  function secInteressados(c) {
+    const l = P.interesses.filter((i) => i.cargaId === c.id && i.status !== 'descartado');
+    if (!l.length) return c.status === 'aberta' ? '<div class="det-sec"><h3>Interessados pelo app</h3><p class="miudo">Nenhum motorista marcou interesse ainda. A carga aparece no app de todos os motoristas.</p></div>' : '';
+    return '<div class="det-sec"><h3>Interessados pelo app <small>' + l.length + '</small></h3>' + l.map((i) => {
+      const v = i.veiculo || {};
+      const r = SV.compatibilidade({ veiculo: v }, c);
+      const zap = 'https://wa.me/' + U.whats(i.telefone) + '?text=' + encodeURIComponent('Olá, ' + (i.motoristaNome || '').split(' ')[0] + '! Aqui é ' + P.op.nome.split(' ')[0] + ', da Severo. Vi seu interesse na carga ' + c.origemCidade + ' → ' + c.destinoCidade + '.');
+      return '<div class="match' + (r.ok ? '' : ' ruim') + '"><div><div class="rota">' + esc(i.motoristaNome) + ' ' + (i.status === 'novo' ? '<span class="etq laranja">novo</span>' : '<span class="etq cinza">' + esc(i.atendidoPor ? 'com ' + i.atendidoPor : 'visto') + '</span>') + '</div>' +
+        '<div class="miudo">' + esc(U.telefone(i.telefone)) + ' · ' + esc(v.tipo || '') + ' ' + esc(v.carroceria || '') + ' · ' + U.toneladas(v.capacidadeKg) + ' · ' + U.desde(i.em) + '</div>' +
+        (i.valorPedido ? '<div style="margin-top:4px;color:var(--amarelo);font-weight:600">Quer negociar: pede ' + U.moeda(i.valorPedido) + (i.mensagem ? ' · “' + esc(i.mensagem) + '”' : '') + '</div>' : '') + '</div>' +
+        '<div class="nota">' + (r.ok ? 'encaixa' : 'não atende') + '</div>' +
+        (r.ok ? '' : '<div class="detalhes">' + r.falhas.map((f) => '<span class="falha">' + esc(f) + '</span>').join(' · ') + '</div>') +
+        '<div class="det-acoes" style="grid-column:1/-1"><a class="btn btn-p" href="' + zap + '" target="_blank" rel="noopener" data-int-contato="' + i.id + '">' + IC.zap + 'WhatsApp</a>' +
+        '<a class="btn btn-p" href="tel:+' + U.whats(i.telefone) + '" data-int-contato="' + i.id + '">' + IC.fone + 'Ligar</a>' +
+        '<button class="btn btn-p btn-fantasma" data-int-descartar="' + i.id + '">Descartar</button></div></div>';
+    }).join('') + '</div>';
   }
   function desenharDetalheCarga() {
     const el = $('#det-carga'); if (!el) return;
@@ -380,7 +483,7 @@
       .map((d) => ({ d: d, r: SV.compatibilidade(d, c) })).sort((x, y) => (y.r.ok - x.r.ok) || (y.r.nota - x.r.nota));
     el.innerHTML = '<div class="det-topo"><div><h2 class="det-nome">' + esc(c.origemCidade) + ' → ' + esc(c.destinoCidade) + '</h2>' +
       '<div class="det-sub">' + esc(c.cliente) + '</div></div>' +
-      '<div class="det-contatos">' + bt('editar-carga', 'Editar') + (c.status === 'aberta' ? bt('cancelar-carga', 'Cancelar carga', 'btn-fantasma btn-perigo') : '') + '</div></div>' +
+      '<div class="det-contatos">' + (soCargas() ? '' : bt('editar-carga', 'Editar') + (c.status === 'aberta' ? bt('cancelar-carga', 'Cancelar carga', 'btn-fantasma btn-perigo') : '')) + '</div></div>' +
       '<dl class="det-grade" style="margin-top:18px">' +
       '<div><dt>Origem</dt><dd>' + esc(c.origemCidade) + '/' + esc(c.origemUF) + '</dd></div>' +
       '<div><dt>Destino</dt><dd>' + esc(c.destinoCidade) + '/' + esc(c.destinoUF) + '</dd></div>' +
@@ -388,10 +491,13 @@
       '<div><dt>Peso</dt><dd>' + U.toneladas(c.pesoKg) + '</dd></div>' +
       '<div><dt>Carroceria</dt><dd>' + esc((c.carrocerias || []).join(', ') || 'Qualquer') + '</dd></div>' +
       '<div><dt>Exigências</dt><dd>' + ([c.anoMinimo ? 'ano ' + c.anoMinimo + '+' : '', c.exigeRastreador ? 'rastreador' : '', c.escolta ? 'escolta' : ''].filter(Boolean).join(', ') || 'Nenhuma') + '</dd></div>' +
-      (veGestao() ? '<div class="largo"><dt>Valor do cliente</dt><dd class="num">' + U.moeda(c.valorCliente) + '</dd></div>' : '') +
-      (c.obs ? '<div class="largo"><dt>Observações</dt><dd>' + esc(c.obs) + '</dd></div>' : '') +
+      '<div><dt>Frete ao motorista</dt><dd class="num">' + (c.valorOferecido ? U.moeda(c.valorOferecido) + '<div class="miudo">' + (c.pedagioIncluso ? 'pedágio incluso' : 'pedágio à parte') + '</div>' : 'a combinar') + '</dd></div>' +
+      '<div><dt>No app do motorista</dt><dd>' + (c.status === 'aberta' && c.visivelApp !== false ? 'Visível' : 'Oculta') + '</dd></div>' +
+      (c.obsMotorista ? '<div class="largo"><dt>Observação para o motorista</dt><dd>' + esc(c.obsMotorista) + '</dd></div>' : '') +
+      (c.obs && !soCargas() ? '<div class="largo"><dt>Observações internas</dt><dd>' + esc(c.obs) + '</dd></div>' : '') +
       '</dl>' +
-      (c.status === 'aberta' ? '<div class="det-sec"><h3>Motoristas disponíveis <small>requisitos primeiro, depois proximidade e destino</small></h3>' +
+      (soCargas() ? '' : secInteressados(c)) +
+      (soCargas() ? '' : c.status === 'aberta' ? '<div class="det-sec"><h3>Motoristas disponíveis <small>requisitos primeiro, depois proximidade e destino</small></h3>' +
         (ativos.length ? ativos.map((x) => '<div class="match' + (x.r.ok ? '' : ' ruim') + '"><div><div class="rota">' + esc(x.d.motoristaNome) + '</div>' +
           '<div class="miudo">' + esc(x.d.cidade || '?') + '/' + esc(x.d.uf || '?') + ' · ' + esc((x.d.veiculo || {}).tipo) + ' ' + esc((x.d.veiculo || {}).carroceria) + ' · ' + U.desde(x.d.localEm || x.d.criadoEm) + '</div></div>' +
           '<div class="nota">' + (x.r.ok ? x.r.nota : 'não atende') + '</div>' +
@@ -399,6 +505,133 @@
           '<button class="btn btn-p" data-abrir="' + x.d.id + '">Abrir pedido</button></div>').join('')
           : '<p class="miudo">Nenhum motorista na fila agora.</p>') + '</div>'
         : '<div class="det-sec"><p class="miudo">Carga ' + (c.status === 'fechada' ? 'fechada' + (c.motoristaNome ? ' com ' + esc(c.motoristaNome) : '') : 'cancelada') + '.</p></div>');
+  }
+
+  /* ---------- administração ---------- */
+  const online = (u) => u.ativo !== false && u.vistoEm && Date.now() - u.vistoEm < 5 * 60000;
+  const quando = (ms) => ms ? new Date(ms).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }) : '—';
+  const DESC_PAPEL = {
+    admin: 'Tudo, inclusive usuários, acessos e motoristas cadastrados.',
+    gestao: 'Fila, cargas e negociações de toda a equipe.',
+    operador: 'Atende a fila e cadastra cargas.',
+    financeiro: 'Fila, cargas e exportação da planilha.',
+    operacoes: 'Somente consulta as cargas. Não vê motoristas nem negociações.'
+  };
+  function barras(contagem, max) {
+    const l = Object.entries(contagem).sort((a, b) => b[1] - a[1]).slice(0, max || 6);
+    if (!l.length) return '<p class="miudo">Sem dados ainda.</p>';
+    const topo = l[0][1];
+    return l.map((x) => '<div class="barra"><span>' + esc(x[0]) + '</span><i style="width:' + Math.max(4, x[1] / topo * 100) + '%"></i><b class="num">' + x[1] + '</b></div>').join('');
+  }
+  function desenharAdmin() {
+    const el = $('#admin'); if (!el) return;
+    const b0 = $('#adm-busca'); const foco = b0 && document.activeElement === b0;
+    const abas = [['geral', 'Visão geral'], ['usuarios', 'Usuários e acessos'], ['motoristas', 'Motoristas cadastrados']];
+    el.innerHTML = '<div class="adm-topo"><h1 class="titulo-m" style="margin:0">Administração</h1>' +
+      '<div class="pn-abas" style="border:0;padding:0">' + abas.map((a) => '<button class="pn-aba" data-adm="' + a[0] + '" aria-pressed="' + (P.adm === a[0]) + '">' + a[1] + '</button>').join('') + '</div></div>' +
+      (P.adm === 'usuarios' ? admUsuarios() : P.adm === 'motoristas' ? admMotoristas() : admGeral());
+    if (foco) { const b = $('#adm-busca'); b.focus(); b.setSelectionRange(b.value.length, b.value.length); }
+  }
+  function admGeral() {
+    const mes = Date.now() - 30 * 86400000;
+    const on = P.usuarios.filter(online);
+    const avisos30 = P.fila.filter((d) => d.criadoEm >= mes);
+    const recusas = {};
+    Object.values(P.atend).forEach((a) => (a.recusas || []).forEach((r) => { recusas[r.motivo] = (recusas[r.motivo] || 0) + 1; }));
+    P.fila.forEach((d) => { const r = d.respostaMotorista; if (r && !r.aceita && r.motivo) recusas[r.motivo] = (recusas[r.motivo] || 0) + 1; });
+    const destinos = {};
+    avisos30.forEach((d) => (d.destinos || []).forEach((u) => { destinos[u] = (destinos[u] || 0) + 1; }));
+    const origens = {};
+    avisos30.forEach((d) => { if (d.cidade) { const k = d.cidade + '/' + d.uf; origens[k] = (origens[k] || 0) + 1; } });
+    const n = (v, rot) => '<div><b class="num">' + v + '</b><span>' + rot + '</span></div>';
+    return '<div class="adm-numeros">' +
+      n(on.length, 'Usuários online agora') + n(P.usuarios.filter((u) => u.ativo !== false).length, 'Usuários ativos') +
+      n(P.motoristas.length, 'Motoristas cadastrados') + n(P.veiculos.length, 'Veículos cadastrados') +
+      n(avisos30.length, 'Avisos “estou vazio” · 30 dias') + n(P.cargas.filter((c) => c.status === 'aberta').length, 'Cargas abertas') +
+      n(P.fila.filter((d) => d.fechadoEm && d.fechadoEm >= mes).length, 'Cargas fechadas · 30 dias') +
+      n(P.fila.filter((d) => d.respostaMotorista && d.respostaMotorista.aceita).length, 'Propostas aceitas no app') +
+      n(P.fila.filter((d) => d.contraproposta).length + P.interesses.filter((i) => i.valorPedido).length, 'Pedidos de negociação') +
+      n(P.interesses.length, 'Interesses em cargas') + '</div>' +
+      '<div class="adm-col">' +
+      '<div class="det-sec"><h3>Online agora <small>visto nos últimos 5 min</small></h3>' +
+      (on.length ? on.map((u) => '<div class="match"><div><div class="rota"><span class="ponto-on"></span>' + esc(u.nome) + '</div><div class="miudo">' + esc(u.email || '') + ' · ' + esc(SV.PAPEIS[u.papel] || u.papel) + ' · ' + esc(u.dispositivo || '') + '</div></div><div class="miudo">' + U.desde(u.vistoEm) + '</div></div>').join('') : '<p class="miudo">Ninguém online.</p>') + '</div>' +
+      '<div class="det-sec"><h3>Últimos acessos</h3>' + tabelaAcessos(8) + '</div>' +
+      '<div class="det-sec"><h3>Destinos mais pedidos <small>30 dias</small></h3>' + barras(destinos) + '</div>' +
+      '<div class="det-sec"><h3>Onde os motoristas ficam vazios <small>30 dias</small></h3>' + barras(origens) + '</div>' +
+      '<div class="det-sec"><h3>Motivos de recusa</h3>' + barras(recusas) + '</div>' +
+      '</div>';
+  }
+  function tabelaAcessos(max) {
+    const l = P.acessos.slice(0, max);
+    if (!l.length) return '<p class="miudo">Nenhum acesso registrado ainda.</p>';
+    return '<div style="overflow-x:auto"><table class="tabela"><thead><tr><th>Quando</th><th>Usuário</th><th>E-mail</th><th>Função</th><th>Dispositivo</th></tr></thead><tbody>' +
+      l.map((a) => '<tr><td class="num">' + quando(a.em) + '</td><td>' + esc(a.nome) + '</td><td>' + esc(a.email) + '</td><td>' + esc(SV.PAPEIS[a.papel] || a.papel) + '</td><td class="miudo">' + esc(a.dispositivo || '') + '</td></tr>').join('') + '</tbody></table></div>';
+  }
+  function admUsuarios() {
+    const l = P.usuarios.slice().sort((a, b) => (online(b) - online(a)) || ((b.vistoEm || 0) - (a.vistoEm || 0)));
+    return '<div class="adm-acoes"><button class="btn btn-p btn-primario" data-acao="novo-usuario">' + IC.mais + 'Novo usuário</button>' +
+      '<span class="miudo">' + l.filter(online).length + ' online · ' + l.filter((u) => u.ativo !== false).length + ' ativos · ' + l.length + ' no total</span></div>' +
+      '<div style="overflow-x:auto"><table class="tabela"><thead><tr><th>Usuário</th><th>Função</th><th>Situação</th><th>Último acesso</th><th>Dispositivo</th><th></th></tr></thead><tbody>' +
+      l.map((u) => {
+        const eu = u.id === P.op.id;
+        const sit = u.ativo === false ? '<span class="etq vermelho">Desativado</span>' : online(u) ? '<span class="etq verde">Online agora</span>' : '<span class="etq cinza">' + (u.vistoEm ? 'Visto ' + U.desde(u.vistoEm) : 'Nunca entrou') + '</span>';
+        return '<tr><td><b>' + esc(u.nome) + (eu ? ' <span class="miudo">(você)</span>' : '') + '</b><div class="miudo">' + esc(u.email || '—') + '</div></td>' +
+          '<td><select class="entrada" data-usr-papel="' + u.id + '"' + (eu ? ' disabled' : '') + ' style="min-height:36px;font-size:.88rem">' +
+          Object.keys(SV.PAPEIS).map((k) => '<option value="' + k + '"' + (k === u.papel ? ' selected' : '') + '>' + SV.PAPEIS[k] + '</option>').join('') + '</select></td>' +
+          '<td>' + sit + '</td><td class="num">' + quando(u.ultimoAcesso) + '</td><td class="miudo">' + esc(u.dispositivo || '—') + '</td>' +
+          '<td style="white-space:nowrap">' + (u.email ? '<button class="btn btn-p btn-fantasma" data-usr-reset="' + u.id + '">Redefinir senha</button>' : '') +
+          (eu ? '' : '<button class="btn btn-p btn-fantasma' + (u.ativo === false ? '' : ' btn-perigo') + '" data-usr-ativo="' + u.id + '">' + (u.ativo === false ? 'Reativar' : 'Desativar') + '</button>') + '</td></tr>';
+      }).join('') + '</tbody></table></div>' +
+      '<div class="det-sec"><h3>Histórico de acessos <small>últimos ' + Math.min(60, P.acessos.length) + '</small></h3>' + tabelaAcessos(60) + '</div>';
+  }
+  function admMotoristas() {
+    const b = U.norm(P.buscaMot);
+    const veics = {}; P.veiculos.forEach((v) => { (veics[v.motoristaId] = veics[v.motoristaId] || []).push(v); });
+    const avisos = {}; P.fila.forEach((d) => { (avisos[d.motoristaId] = avisos[d.motoristaId] || []).push(d); });
+    const l = P.motoristas.filter((m) => !b || U.norm(m.nome + ' ' + m.telefone + ' ' + (veics[m.id] || []).map((v) => v.placa).join(' ')).indexOf(b) >= 0)
+      .sort((x, y) => ((avisos[y.id] || [])[0] ? Math.max.apply(null, avisos[y.id].map((d) => d.criadoEm)) : y.criadoEm) - ((avisos[x.id] || [])[0] ? Math.max.apply(null, avisos[x.id].map((d) => d.criadoEm)) : x.criadoEm));
+    return '<div class="adm-acoes"><input class="entrada" id="adm-busca" placeholder="Buscar por nome, telefone ou placa" value="' + esc(P.buscaMot) + '" style="max-width:360px;min-height:40px;font-size:.95rem">' +
+      '<span class="miudo">' + P.motoristas.length + ' motoristas · ' + P.veiculos.length + ' veículos</span></div>' +
+      '<div style="overflow-x:auto"><table class="tabela"><thead><tr><th>Motorista</th><th>Veículos</th><th>Cadastro</th><th>Último aviso</th><th>Avisos</th><th>Fechadas</th><th>Agora</th></tr></thead><tbody>' +
+      (l.length ? l.map((m) => {
+        const av = (avisos[m.id] || []).sort((x, y) => y.criadoEm - x.criadoEm), ult = av[0];
+        const vs = veics[m.id] || [];
+        return '<tr><td><b>' + esc(m.nome) + '</b><div class="miudo num">' + esc(U.telefone(m.telefone)) + '</div></td>' +
+          '<td>' + (vs.length ? vs.map((v) => esc(v.tipo + ' ' + v.carroceria) + ' · ' + U.toneladas(v.capacidadeKg) + (v.placa ? ' <span class="placa-br" style="margin:0">' + esc(v.placa) + '</span>' : '')).join('<br>') : '<span class="miudo">—</span>') + '</td>' +
+          '<td class="num">' + quando(m.criadoEm) + '</td>' +
+          '<td>' + (ult ? esc(ult.cidade || 'áudio') + (ult.uf ? '/' + esc(ult.uf) : '') + '<div class="miudo">' + U.desde(ult.criadoEm) + '</div>' : '<span class="miudo">nunca</span>') + '</td>' +
+          '<td class="num">' + av.length + '</td><td class="num">' + av.filter((d) => d.fechadoEm).length + '</td>' +
+          '<td>' + (ult ? '<span class="etq ' + SV.STATUS[SV.statusEfetivo(ult)].tom + '">' + SV.STATUS[SV.statusEfetivo(ult)].rotulo + '</span>' : '') + '</td></tr>';
+      }).join('') : '<tr><td colspan="7" class="miudo">Nenhum motorista encontrado.</td></tr>') + '</tbody></table></div>';
+  }
+  function gerarSenha() {
+    const c = 'abcdefghjkmnpqrstuvwxyzABCDEFGHJKMNPQRSTUVWXYZ23456789';
+    let r = ''; const a = new Uint32Array(10); crypto.getRandomValues(a);
+    a.forEach((x) => { r += c[x % c.length]; });
+    return r;
+  }
+  function dlgUsuario() {
+    dialogo('<h2>Novo usuário da central</h2>' +
+      '<label class="campo"><span>Nome</span><input name="nome" required autocomplete="off"></label>' +
+      '<label class="campo"><span>E-mail</span><input name="email" type="email" required autocomplete="off"></label>' +
+      '<label class="campo"><span>Senha provisória</span><input name="senha" value="' + gerarSenha() + '" autocomplete="off"><small>Mínimo de 6 caracteres. A pessoa pode trocar depois em “Redefinir senha”.</small></label>' +
+      '<label class="campo"><span>Função</span><select name="papel">' + Object.keys(SV.PAPEIS).map((k) => '<option value="' + k + '"' + (k === 'operador' ? ' selected' : '') + '>' + SV.PAPEIS[k] + '</option>').join('') + '</select>' +
+      '<small id="desc-papel">' + DESC_PAPEL.operador + '</small></label>' +
+      rodape('Criar usuário'),
+      async (f) => {
+        const nome = f.nome.value.trim(), email = f.email.value.trim().toLowerCase(), senha = f.senha.value;
+        if (nome.length < 2) throw new Error('Digite o nome.');
+        if (!/^\S+@\S+\.\S+$/.test(email)) throw new Error('Digite um e-mail válido.');
+        if (senha.length < 6) throw new Error('A senha precisa ter pelo menos 6 caracteres.');
+        await SV.criarUsuario({ nome: nome, email: email, senha: senha, papel: f.papel.value, criadoPor: P.op.nome });
+        const link = location.origin + '/painel';
+        setTimeout(() => dialogo('<h2>Usuário criado</h2><p class="sub">Envie estes dados para ' + esc(nome.split(' ')[0]) + '.</p>' +
+          '<div class="margem" id="cred" style="line-height:1.7">Endereço: <b>' + esc(link) + '</b><br>E-mail: <b>' + esc(email) + '</b><br>Senha: <b>' + esc(senha) + '</b><br>Função: <b>' + esc(SV.PAPEIS[f.papel.value]) + '</b></div>' +
+          (SV.modo === 'demo' ? '<p class="miudo">No modo demonstração, o login é feito pelo nome.</p>' : '') +
+          '<div class="rodape"><button type="button" class="btn" data-copiar-cred>Copiar</button><button type="submit" class="btn btn-primario">Pronto</button></div>',
+          async () => {}), 0);
+      },
+      (f) => { f.papel.addEventListener('change', () => { $('#desc-papel').textContent = DESC_PAPEL[f.papel.value]; }); });
   }
 
   /* ---------- diálogos ---------- */
@@ -433,38 +666,36 @@
     const a = P.atend[d.id] || {}, n = a.negociacao || {};
     const abertas = P.cargas.filter((c) => c.status === 'aberta').map((c) => ({ c: c, r: SV.compatibilidade(d, c) })).sort((x, y) => (y.r.ok - x.r.ok) || (y.r.nota - x.r.nota));
     const rot = (c) => c.cliente + ' · ' + c.origemCidade + '/' + c.origemUF + ' → ' + c.destinoCidade + '/' + c.destinoUF;
+    const incluso = n.pedagioIncluso == null ? true : n.pedagioIncluso;
     dialogo('<h2>Proposta para ' + esc((d.motoristaNome || '').split(' ')[0]) + '</h2>' +
+      (d.contraproposta && d.status === 'contraproposta' ? '<div class="margem">O motorista pediu <b>' + U.moeda(d.contraproposta.valor) + '</b>' + (d.contraproposta.mensagem ? ': “' + esc(d.contraproposta.mensagem) + '”' : '') + '</div>' : '') +
       '<label class="campo"><span>Carga</span><select name="carga"><option value="">Carga não cadastrada</option>' +
       abertas.map((x) => '<option value="' + x.c.id + '"' + (n.cargaId === x.c.id ? ' selected' : '') + '>' + esc(rot(x.c)) + (x.r.ok ? '' : ' (não atende)') + '</option>').join('') + '</select></label>' +
       '<label class="campo"><span>Rota informada ao motorista</span><input name="rota" value="' + esc(n.rota || '') + '" placeholder="Contagem/MG → Rio de Janeiro/RJ"></label>' +
-      '<div class="grade2"><label class="campo"><span>Valor do cliente (R$)</span><input name="cliente" inputmode="decimal" value="' + (n.valorCliente || '') + '"></label>' +
-      '<label class="campo"><span>Repasse ao parceiro (R$)</span><input name="repasse" inputmode="decimal" required value="' + (n.repasse || '') + '"></label></div>' +
-      '<div class="grade2"><label class="campo"><span>Pedágio (R$)</span><input name="pedagio" inputmode="decimal" value="' + (n.pedagio || '') + '"><small>Fica separado da margem.</small></label>' +
+      '<div class="grade2"><label class="campo"><span>Valor do frete ao motorista (R$)</span><input name="repasse" inputmode="decimal" required value="' + (n.repasse || '') + '"></label>' +
+      '<label class="interruptor" style="margin:1.75rem 0 1.1rem">Pedágio incluso<input type="checkbox" name="incluso"' + (incluso ? ' checked' : '') + '></label></div>' +
+      '<div class="grade2"><label class="campo" id="c-pedagio"' + (incluso ? ' style="display:none"' : '') + '><span>Pedágio à parte (R$)</span><input name="pedagio" inputmode="decimal" value="' + (n.pedagio || '') + '"><small>Vale-pedágio pago separado. Opcional.</small></label>' +
       '<label class="campo"><span>Pagamento combinado</span><input name="pagamento" value="' + esc(n.pagamento || '') + '" placeholder="70% no carregamento"></label></div>' +
-      (veGestao() ? '<div class="margem" id="margem"></div>' : '') +
-      rodape('Registrar proposta'),
+      rodape('Enviar proposta ao motorista'),
       async (f) => {
         const repasse = num(f.repasse.value);
-        if (!repasse) throw new Error('Informe o valor de repasse ao parceiro.');
+        if (!repasse) throw new Error('Informe o valor do frete ao motorista.');
         const carga = P.cargas.find((c) => c.id === f.carga.value);
         await SV.enviarProposta(d, P.op, {
           cargaId: carga ? carga.id : null, cargaRotulo: carga ? rot(carga) : '', rota: f.rota.value.trim(),
-          valorCliente: num(f.cliente.value), repasse: repasse, pedagio: num(f.pedagio.value), pagamento: f.pagamento.value.trim()
+          repasse: repasse, pedagioIncluso: f.incluso.checked, pedagio: f.incluso.checked ? null : num(f.pedagio.value), pagamento: f.pagamento.value.trim()
         });
-        aviso('Proposta registrada. Avise o motorista por telefone ou WhatsApp.');
+        aviso('Proposta enviada. O motorista recebe no app para aceitar, negociar ou recusar.');
       },
       (f) => {
-        const calc = () => {
-          const m = $('#margem'); if (!m) return;
-          const cl = num(f.cliente.value), rp = num(f.repasse.value);
-          m.innerHTML = cl && rp ? 'Diferença comercial: <b>' + U.moeda(cl - rp) + '</b> (' + Math.round((cl - rp) / cl * 100) + '%). Antes de impostos, equipe e demais custos; não é lucro líquido.' : 'Preencha valor do cliente e repasse para ver a diferença comercial.';
-        };
+        f.incluso.addEventListener('change', () => { $('#c-pedagio').style.display = f.incluso.checked ? 'none' : ''; });
         f.carga.addEventListener('change', () => {
           const c = P.cargas.find((x) => x.id === f.carga.value);
-          if (c) { f.rota.value = c.origemCidade + '/' + c.origemUF + ' → ' + c.destinoCidade + '/' + c.destinoUF; if (c.valorCliente) f.cliente.value = c.valorCliente; }
-          calc();
+          if (!c) return;
+          f.rota.value = c.origemCidade + '/' + c.origemUF + ' → ' + c.destinoCidade + '/' + c.destinoUF;
+          if (c.valorOferecido) f.repasse.value = c.valorOferecido;
+          f.incluso.checked = !!c.pedagioIncluso; $('#c-pedagio').style.display = f.incluso.checked ? 'none' : '';
         });
-        f.cliente.addEventListener('input', calc); f.repasse.addEventListener('input', calc); calc();
       });
   }
   function dlgRecusa(d) {
@@ -511,10 +742,13 @@
       '<div class="grade3"><label class="campo"><span>Destino</span><input name="dc" required value="' + esc(c.destinoCidade || '') + '"></label><label class="campo"><span>UF</span>' + sel('du', c.destinoUF) + '</label><label class="campo"><span>Peso (t)</span><input name="peso" inputmode="decimal" value="' + (c.pesoKg ? String(c.pesoKg / 1000).replace('.', ',') : '') + '"></label></div>' +
       '<div class="campo"><span>Carrocerias aceitas</span>' + chipsHtml(SV.CARROCERIAS, c.carrocerias || [], true) + '<small>Nenhuma marcada = qualquer carroceria.</small></div>' +
       '<div class="grade2"><label class="campo"><span>Ano mínimo</span><input name="ano" inputmode="numeric" value="' + (c.anoMinimo || '') + '"></label>' +
-      '<label class="campo"><span>Valor do cliente (R$)</span><input name="valor" inputmode="decimal" value="' + (c.valorCliente || '') + '"></label></div>' +
+      '<label class="campo"><span>Valor do frete ao motorista (R$)</span><input name="oferecido" inputmode="decimal" value="' + (c.valorOferecido || '') + '"><small>Aparece no app. Em branco = “a combinar”.</small></label></div>' +
       '<div class="grade2"><label class="interruptor" style="margin-bottom:1.1rem">Exige rastreador<input type="checkbox" name="rast"' + (c.exigeRastreador ? ' checked' : '') + '></label>' +
       '<label class="interruptor" style="margin-bottom:1.1rem">Escolta<input type="checkbox" name="escolta"' + (c.escolta ? ' checked' : '') + '></label></div>' +
-      '<label class="campo"><span>Observações</span><textarea name="obs">' + esc(c.obs || '') + '</textarea></label>' + rodape('Salvar carga'),
+      '<div class="grade2"><label class="interruptor" style="margin-bottom:1.1rem">Pedágio incluso no frete<input type="checkbox" name="incluso"' + (c.pedagioIncluso ? ' checked' : '') + '></label>' +
+      '<label class="interruptor" style="margin-bottom:1.1rem">Mostrar no app<input type="checkbox" name="visivel"' + (c.visivelApp === false ? '' : ' checked') + '></label></div>' +
+      '<label class="campo"><span>Observação para o motorista</span><input name="obsMot" value="' + esc(c.obsMotorista || '') + '" placeholder="Ex.: carga paletizada, descarga com agendamento"><small>Aparece no app do motorista.</small></label>' +
+      '<label class="campo"><span>Observações internas</span><textarea name="obs">' + esc(c.obs || '') + '</textarea><small>Só a equipe vê.</small></label>' + rodape('Salvar carga'),
       async (f) => {
         if (!f.cliente.value.trim() || !f.oc.value.trim() || !f.ou.value || !f.dc.value.trim() || !f.du.value) throw new Error('Preencha cliente, origem e destino com UF.');
         const salva = await SV.salvarCarga(Object.assign({}, c, {
@@ -522,7 +756,8 @@
           dataCarregamento: f.data.value ? new Date(f.data.value + 'T08:00').getTime() : null,
           pesoKg: num(f.peso.value) ? Math.round(num(f.peso.value) * 1000) : null,
           carrocerias: chipsLidos($('.chips', f)), anoMinimo: parseInt(f.ano.value, 10) || null,
-          valorCliente: num(f.valor.value), exigeRastreador: f.rast.checked, escolta: f.escolta.checked, obs: f.obs.value.trim()
+          valorOferecido: num(f.oferecido.value), pedagioIncluso: f.incluso.checked, visivelApp: f.visivel.checked, obsMotorista: f.obsMot.value.trim(),
+          exigeRastreador: f.rast.checked, escolta: f.escolta.checked, obs: f.obs.value.trim()
         }));
         P.selCarga = salva.id;
         aviso('Carga salva.');
@@ -531,17 +766,15 @@
 
   /* ---------- exportação ---------- */
   function exportar() {
-    const g = veGestao();
-    const cab = ['Criado em', 'Motorista', 'Telefone', 'Cidade', 'UF', 'Veículo', 'Carroceria', 'Capacidade (t)', 'Placa', 'Destinos', 'Aceita outras', 'Situação', 'Responsável', '1º contato (min)', 'Repasse', 'Pedágio', 'Pagamento']
-      .concat(g ? ['Valor cliente', 'Diferença comercial'] : []).concat(['Motivos de recusa']);
+    const cab = ['Criado em', 'Motorista', 'Telefone', 'Bairro', 'Cidade', 'UF', 'Veículo', 'Carroceria', 'Capacidade (t)', 'Placa', 'Destinos', 'Aceita outras', 'Situação', 'Responsável', '1º contato (min)', 'Frete ao motorista', 'Pedágio incluso', 'Pedágio à parte', 'Pagamento', 'Motorista pediu', 'Resposta no app', 'Motivos de recusa'];
     const dt = (ms) => ms ? new Date(ms).toLocaleString('pt-BR') : '';
     const linhas = P.fila.slice().sort((a, b) => a.criadoEm - b.criadoEm).map((d) => {
       const v = d.veiculo || {}, a = P.atend[d.id] || {}, n = a.negociacao || {};
-      return [dt(d.criadoEm), d.motoristaNome, U.telefone(d.telefone), d.cidade, d.uf, v.tipo, v.carroceria, v.capacidadeKg ? v.capacidadeKg / 1000 : '', v.placa,
+      return [dt(d.criadoEm), d.motoristaNome, U.telefone(d.telefone), d.bairro || '', d.cidade, d.uf, v.tipo, v.carroceria, v.capacidadeKg ? v.capacidadeKg / 1000 : '', v.placa,
         (d.destinos || []).join(' '), d.aceitaOutras ? 'sim' : 'não', SV.STATUS[SV.statusEfetivo(d)].rotulo, d.responsavelNome || '',
-        d.assumidoEm ? Math.round((d.assumidoEm - d.criadoEm) / 60000) : '', n.repasse || '', n.pedagio || '', n.pagamento || '']
-        .concat(g ? [n.valorCliente || '', n.valorCliente && n.repasse ? n.valorCliente - n.repasse : ''] : [])
-        .concat([(a.recusas || []).map((r) => r.motivo).join(', ')]);
+        d.assumidoEm ? Math.round((d.assumidoEm - d.criadoEm) / 60000) : '', n.repasse || '', n.repasse ? (n.pedagioIncluso ? 'sim' : 'não') : '', n.pedagio || '', n.pagamento || '',
+        d.contraproposta ? d.contraproposta.valor : '', d.respostaMotorista ? (d.respostaMotorista.aceita ? 'aceitou' : 'recusou: ' + d.respostaMotorista.motivo) : '',
+        (a.recusas || []).map((r) => r.motivo).concat(d.respostaMotorista && !d.respostaMotorista.aceita ? [d.respostaMotorista.motivo] : []).join(', ')];
     });
     const csv = '\ufeff' + [cab].concat(linhas).map((l) => l.map((c) => {
       const s = typeof c === 'number' ? String(c).replace('.', ',') : String(c == null ? '' : c);
@@ -556,6 +789,25 @@
 
   /* ---------- eventos ---------- */
   raiz.addEventListener('click', async (e) => {
+    const adm = e.target.closest('[data-adm]');
+    if (adm) { P.adm = adm.dataset.adm; return desenharAdmin(); }
+    const ur = e.target.closest('[data-usr-reset]');
+    if (ur) {
+      const u = P.usuarios.find((x) => x.id === ur.dataset.usrReset);
+      if (u && confirm('Enviar e-mail de redefinição de senha para ' + u.email + '?')) {
+        try { await SV.redefinirSenha(u.email); aviso(SV.modo === 'demo' ? 'No modo demonstração não há e-mail.' : 'E-mail de redefinição enviado para ' + u.email + '.'); } catch (err) { aviso(err.message, true); }
+      }
+      return;
+    }
+    const ua = e.target.closest('[data-usr-ativo]');
+    if (ua) {
+      const u = P.usuarios.find((x) => x.id === ua.dataset.usrAtivo);
+      const desativar = u && u.ativo !== false;
+      if (u && confirm((desativar ? 'Desativar ' : 'Reativar ') + u.nome + '?' + (desativar ? ' A pessoa perde o acesso à central na hora.' : ''))) {
+        try { await SV.atualizarUsuario(u.id, { ativo: !desativar }); aviso(u.nome + (desativar ? ' desativado.' : ' reativado.')); } catch (err) { aviso(err.message, true); }
+      }
+      return;
+    }
     const nav = e.target.closest('[data-aba]');
     if (nav) return trocarAba(nav.dataset.aba);
     const s = e.target.closest('[data-sel]');
@@ -564,6 +816,10 @@
     if (ca) { P.selCarga = ca.dataset.carga; desenharCargas(); desenharDetalheCarga(); return; }
     const ab = e.target.closest('[data-abrir]');
     if (ab) { P.sel = ab.dataset.abrir; P.f.grupo = 'ativos'; return trocarAba('fila'); }
+    const ic = e.target.closest('[data-int-contato]');
+    if (ic) { const i = P.interesses.find((x) => x.id === ic.dataset.intContato); if (i && i.status === 'novo') SV.marcarInteresse(i, 'contatado', P.op).catch(() => {}); return; }
+    const idesc = e.target.closest('[data-int-descartar]');
+    if (idesc) { const i = P.interesses.find((x) => x.id === idesc.dataset.intDescartar); if (i) SV.marcarInteresse(i, 'descartado', P.op).catch((err) => aviso(err.message, true)); return; }
     const zap = e.target.closest('[data-contato]');
     const d = P.fila.find((x) => x.id === P.sel);
     if (zap && d) { SV.anotar(d, 'Contato por ' + zap.dataset.contato, P.op).catch(() => {}); return; }
@@ -571,11 +827,12 @@
     if (!b) return;
     const acao = b.dataset.acao;
     try {
-      if (acao === 'sair') { P.parar.forEach((f) => f()); await SV.sairOperador(); P.op = null; return telaLogin(); }
+      if (acao === 'sair') { clearInterval(P.tPresenca); P.parar.forEach((f) => f()); await SV.sairOperador(); P.op = null; return telaLogin(); }
       if (acao === 'semear') { await SV.semearDemo(); return aviso('Dados de exemplo criados.'); }
       if (acao === 'limpar') { if (confirm('Apagar todos os dados de demonstração deste navegador?')) { SV.limparDemo(); P.sel = null; aviso('Demonstração limpa.'); } return; }
       if (acao === 'exportar') return exportar();
       if (acao === 'nova-carga') return dlgCarga();
+      if (acao === 'novo-usuario') return dlgUsuario();
       if (acao === 'editar-carga') return dlgCarga(P.cargas.find((c) => c.id === P.selCarga));
       if (acao === 'cancelar-carga') {
         const c = P.cargas.find((x) => x.id === P.selCarga);
@@ -586,6 +843,7 @@
       if (acao === 'assumir') { await SV.assumir(d, P.op); return aviso('Atendimento é seu. Ligue ou chame no WhatsApp.'); }
       if (acao === 'transferir') { if (confirm('Transferir o atendimento de ' + d.responsavelNome + ' para você?')) { await SV.assumir(d, P.op, true); aviso('Atendimento transferido para você.'); } return; }
       if (acao === 'proposta') return dlgProposta(d);
+      if (acao === 'aceitar-contra') { if (confirm('Aceitar ' + U.moeda((d.contraproposta || {}).valor) + ' pedido pelo motorista?')) { await SV.aceitarContraproposta(d, P.op); aviso('Valor aceito. Falta a aprovação documental.'); } return; }
       if (acao === 'recusou') return dlgRecusa(d);
       if (acao === 'fechar') return dlgFechar(d);
       if (acao === 'aceitou') { await SV.mudarStatus(d, 'aguardando_aprovacao', P.op, 'Motorista aceitou a proposta'); return aviso('Aceite registrado. Falta a aprovação documental.'); }
@@ -593,6 +851,21 @@
       if (acao === 'sem-carga') return dlgMotivo(d, 'sem_carga', 'Sem carga encontrada', 'Encerrar e avisar');
       if (acao === 'cancelar') return dlgMotivo(d, 'cancelado', 'Cancelar atendimento', 'Cancelar pedido');
     } catch (err) { aviso(err.message || 'Não foi possível concluir.', true); }
+  });
+
+  raiz.addEventListener('change', async (e) => {
+    const sel = e.target.closest('[data-usr-papel]');
+    if (!sel) return;
+    const u = P.usuarios.find((x) => x.id === sel.dataset.usrPapel);
+    if (!u) return;
+    if (!confirm('Mudar ' + u.nome + ' para ' + SV.PAPEIS[sel.value] + '?')) { sel.value = u.papel; return; }
+    try { await SV.atualizarUsuario(u.id, { papel: sel.value }); aviso('Função atualizada.'); } catch (err) { sel.value = u.papel; aviso(err.message, true); }
+  });
+  raiz.addEventListener('input', (e) => { if (e.target.id === 'adm-busca') { P.buscaMot = e.target.value; desenharAdmin(); } });
+  document.addEventListener('click', (e) => {
+    if (!e.target.closest('[data-copiar-cred]')) return;
+    const t = $('#cred').innerText;
+    (navigator.clipboard ? navigator.clipboard.writeText(t) : Promise.reject()).then(() => aviso('Dados copiados.')).catch(() => aviso('Selecione o texto e copie.'));
   });
 
   /* ---------- partida ---------- */

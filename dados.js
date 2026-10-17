@@ -25,7 +25,8 @@
   const STATUS = {
     disponivel:           { rotulo: 'Disponível',            motorista: 'Aguardando atendimento',  passo: 'A Severo vai entrar em contato com você.', tom: 'azul' },
     em_atendimento:       { rotulo: 'Em atendimento',        motorista: 'Buscando sua carga',      passo: 'Um operador da Severo está procurando carga para a sua rota.', tom: 'laranja' },
-    proposta_enviada:     { rotulo: 'Proposta enviada',      motorista: 'Você recebeu uma proposta', passo: 'O operador te passou rota, valor e pagamento. Responda a ele por telefone ou WhatsApp.', tom: 'laranja' },
+    proposta_enviada:     { rotulo: 'Proposta enviada',      motorista: 'Você recebeu uma proposta', passo: 'Confira rota, valor e pagamento e responda aqui mesmo.', tom: 'laranja' },
+    contraproposta:       { rotulo: 'Quer negociar',         motorista: 'Negociação enviada',      passo: 'A Severo está analisando o valor que você pediu.', tom: 'amarelo' },
     aguardando_aprovacao: { rotulo: 'Aguardando aprovação',  motorista: 'Proposta aceita',         passo: 'Estamos conferindo documentos e aprovando a operação.', tom: 'amarelo' },
     carga_fechada:        { rotulo: 'Carga fechada',         motorista: 'Carga fechada',           passo: 'Siga as orientações do operador para o carregamento.', tom: 'verde' },
     carregado:            { rotulo: 'Carregado',             motorista: 'Carregado',               passo: 'Boa viagem. Quando ficar vazio de novo, avise a Severo.', tom: 'verde' },
@@ -33,7 +34,14 @@
     cancelado:            { rotulo: 'Cancelado',             motorista: 'Pedido cancelado',        passo: 'Quando ficar vazio de novo, é só avisar.', tom: 'cinza' },
     vencida:              { rotulo: 'Vencida',               motorista: 'Aviso vencido',           passo: 'Seu aviso passou de ' + VALIDADE_H + ' horas. Confirme se ainda está vazio.', tom: 'cinza' }
   };
-  const ATIVOS = ['disponivel', 'em_atendimento', 'proposta_enviada', 'aguardando_aprovacao'];
+  const ATIVOS = ['disponivel', 'em_atendimento', 'proposta_enviada', 'contraproposta', 'aguardando_aprovacao'];
+  const PAPEIS = { admin: 'Administrador', gestao: 'Gestão', operador: 'Operador', financeiro: 'Financeiro', operacoes: 'Operações (só cargas)' };
+  const dispositivo = () => {
+    const u = navigator.userAgent;
+    const so = /Android/i.test(u) ? 'Android' : /iPhone|iPad/i.test(u) ? 'iPhone' : /Windows/i.test(u) ? 'Windows' : /Mac/i.test(u) ? 'Mac' : /Linux/i.test(u) ? 'Linux' : 'Outro';
+    const nav = /Edg\//.test(u) ? 'Edge' : /Chrome\//.test(u) ? 'Chrome' : /Firefox\//.test(u) ? 'Firefox' : /Safari\//.test(u) ? 'Safari' : 'Navegador';
+    return nav + ' · ' + so;
+  };
   const EM_OPERACAO = ['carga_fechada', 'carregado'];
   const MOTIVOS_RECUSA = ['Valor', 'Rota', 'Horário', 'Perfil do veículo', 'Outro'];
   const VEICULOS = ['Carreta', 'Carreta LS', 'Bitrem', 'Rodotrem', 'Truck', 'Bitruck', 'Toco', '3/4', 'VUC'];
@@ -171,15 +179,38 @@
       },
       async sairMotorista() { localStorage.removeItem(P + 'eu'); },
       async entrarOperador(email, senha, extra) {
-        const op = { id: 'op-' + norm(extra.nome).replace(/\W+/g, '-'), nome: extra.nome, email: email, papel: extra.papel || 'operador' };
-        localStorage.setItem(P + 'op', JSON.stringify(op));
+        const t = ler('usuarios');
+        const existente = Object.values(t).find((u) => norm(u.nome) === norm(extra.nome));
+        const id = existente ? existente.id : 'op-' + norm(extra.nome).replace(/\W+/g, '-');
+        if (t[id] && t[id].ativo === false) throw new Error('Este usuário foi desativado pelo administrador.');
+        const op = Object.assign({ id: id, nome: extra.nome, email: email || norm(extra.nome).replace(/\W+/g, '.') + '@demo', papel: extra.papel || 'operador', ativo: true, criadoEm: agora() }, t[id] || {});
+        if (!t[id]) { t[id] = op; escrever('usuarios', t); }
+        localStorage.setItem(P + 'op', JSON.stringify({ id: id }));
         return op;
       },
-      async operadorAtual() { try { return JSON.parse(localStorage.getItem(P + 'op')); } catch (e) { return null; } },
+      async operadorAtual() {
+        try {
+          const s = JSON.parse(localStorage.getItem(P + 'op'));
+          const u = s && ler('usuarios')[s.id];
+          return u && u.ativo !== false ? u : null;
+        } catch (e) { return null; }
+      },
+      async criarUsuario(dados) {
+        const t = ler('usuarios');
+        if (Object.values(t).some((u) => u.email === dados.email)) throw new Error('Já existe um usuário com este e-mail.');
+        const id = 'op-' + norm(dados.nome).replace(/\W+/g, '-') + '-' + novoId().slice(-4);
+        t[id] = { id: id, nome: dados.nome, email: dados.email, papel: dados.papel, ativo: true, criadoEm: agora(), criadoPor: dados.criadoPor || null };
+        escrever('usuarios', t);
+        return id;
+      },
+      async redefinirSenha() { /* demo: nada a enviar */ },
+      recentes(c, campo, n, cb) {
+        return this.observar(c, null, (l) => cb(l.sort((a, b) => (b[campo] || 0) - (a[campo] || 0)).slice(0, n)));
+      },
       async sairOperador() { localStorage.removeItem(P + 'op'); },
       limparTudo() {
         Object.keys(localStorage).filter((k) => k.indexOf(P) === 0 && k !== P + 'op').forEach((k) => localStorage.removeItem(k));
-        ['motoristas', 'veiculos', 'disponibilidades', 'atendimentos', 'cargas'].forEach((c) => { if (bc) bc.postMessage(c); avisar(c); });
+        ['motoristas', 'veiculos', 'disponibilidades', 'atendimentos', 'cargas', 'cargasPublicas', 'interesses', 'audios', 'acessos'].forEach((c) => { if (bc) bc.postMessage(c); avisar(c); });
       }
     };
   }
@@ -257,15 +288,38 @@
         const u = await motor.obter('usuarios', c.user.uid);
         if (!u || !u.papel) {
           await auth.signOut();
-          throw new Error('Este usuário não tem acesso à central. Peça para a gestão liberar.');
+          throw new Error('Este usuário não tem acesso à central. Peça para o administrador liberar.');
         }
-        return Object.assign({}, u, { id: c.user.uid });
+        if (u.ativo === false) { await auth.signOut(); throw new Error('Este usuário foi desativado pelo administrador.'); }
+        return Object.assign({}, u, { id: c.user.uid, email: c.user.email });
       },
       async operadorAtual() {
         const u = auth.currentUser;
         if (!u || u.isAnonymous) return null;
         const d = await motor.obter('usuarios', u.uid);
-        return d && d.papel ? Object.assign({}, d, { id: u.uid }) : null;
+        return d && d.papel && d.ativo !== false ? Object.assign({}, d, { id: u.uid, email: u.email }) : null;
+      },
+      /** Cria o login em uma instância separada do Firebase, sem derrubar a sessão do administrador. */
+      async criarUsuario(dados) {
+        const sec = firebase.apps.find((a) => a.name === 'criador') || firebase.initializeApp(cfg.firebase, 'criador');
+        const sa = sec.auth();
+        await sa.setPersistence(firebase.auth.Auth.Persistence.NONE);
+        let cred;
+        try { cred = await sa.createUserWithEmailAndPassword(dados.email, dados.senha); }
+        catch (e) {
+          const m = { 'auth/email-already-in-use': 'Já existe um usuário com este e-mail.', 'auth/invalid-email': 'E-mail inválido.', 'auth/weak-password': 'A senha precisa ter pelo menos 6 caracteres.' }[e.code];
+          throw new Error(m || e.message);
+        }
+        const uid = cred.user.uid;
+        await sa.signOut();
+        await motor.gravar('usuarios', uid, { nome: dados.nome, email: dados.email, papel: dados.papel, ativo: true, criadoEm: agora(), criadoPor: dados.criadoPor || null });
+        return uid;
+      },
+      async redefinirSenha(email) { await auth.sendPasswordResetEmail(email); },
+      recentes(c, campo, n, cb) {
+        return col(c).orderBy(campo, 'desc').limit(n).onSnapshot(
+          (snap) => cb(snap.docs.map((d) => Object.assign({ id: d.id }, d.data()))),
+          (e) => console.error('[Severo] leitura de ' + c, e));
       },
       async sairOperador() { await auth.signOut(); }
     };
@@ -323,7 +377,7 @@
         telefone: p.motorista.telefone,
         veiculoId: v.id,
         veiculo: { tipo: v.tipo, carroceria: v.carroceria, capacidadeKg: v.capacidadeKg || null, placa: v.placa || '', ano: v.ano || null, rastreador: !!v.rastreador },
-        cidade: p.cidade || '', uf: p.uf || '',
+        cidade: p.cidade || '', uf: p.uf || '', bairro: p.bairro || '',
         lat: p.lat == null ? null : p.lat, lng: p.lng == null ? null : p.lng,
         localEm: agora(),
         quando: p.quando,
@@ -368,7 +422,24 @@
     },
 
     /* ----- central ----- */
+    PAPEIS: PAPEIS,
     entrarOperador(email, senha, extra) { return M.entrarOperador(email, senha, extra || {}); },
+    /** Presença do usuário da central: registra acesso ao abrir e marca "visto" a cada 2 min. */
+    async presenca(op, novoAcesso) {
+      const disp = dispositivo();
+      const patch = { vistoEm: agora(), dispositivo: disp };
+      if (novoAcesso) patch.ultimoAcesso = agora();
+      if (op.email) patch.email = op.email;
+      await M.gravar('usuarios', op.id, patch);
+      if (novoAcesso) await M.gravar('acessos', novoId(), { uid: op.id, nome: op.nome, email: op.email || '', papel: op.papel, em: agora(), dispositivo: disp });
+    },
+    observarUsuarios(cb) { return M.observar('usuarios', null, cb); },
+    observarAcessos(cb) { return M.recentes('acessos', 'em', 60, cb); },
+    observarMotoristas(cb) { return M.observar('motoristas', null, cb); },
+    observarTodosVeiculos(cb) { return M.observar('veiculos', null, cb); },
+    criarUsuario(dados) { return M.criarUsuario(dados); },
+    atualizarUsuario(id, patch) { return M.gravar('usuarios', id, Object.assign({}, patch, { atualizadoEm: agora() })); },
+    redefinirSenha(email) { return M.redefinirSenha(email); },
     operadorAtual() { return M.operadorAtual(); },
     sairOperador() { return M.sairOperador(); },
     observarFila(cb) { return M.observar('disponibilidades', null, cb); },
@@ -412,11 +483,11 @@
       const a = await SV.atendimento(d.id);
       await M.gravar('atendimentos', d.id, {
         negociacao: Object.assign({}, n, { em: agora(), por: op.nome }),
-        notas: (a.notas || []).concat(evento('Proposta: ' + util.moeda(n.repasse) + ' ao parceiro' + (n.cargaRotulo ? ' · ' + n.cargaRotulo : ''), op, 'proposta'))
+        notas: (a.notas || []).concat(evento('Proposta: frete de ' + util.moeda(n.repasse) + (n.pedagioIncluso ? ' com pedágio incluso' : ' + pedágio à parte') + (n.cargaRotulo ? ' · ' + n.cargaRotulo : ''), op, 'proposta'))
       });
       await M.atualizarCom('disponibilidades', d.id, (x) => ({
-        proposta: { rota: n.rota || '', valorParceiro: n.repasse, pedagio: n.pedagio || null, pagamento: n.pagamento || '', cargaId: n.cargaId || null },
-        status: 'proposta_enviada', atualizadoEm: agora(),
+        proposta: { rota: n.rota || '', valorParceiro: n.repasse, pedagioIncluso: !!n.pedagioIncluso, pedagio: n.pedagioIncluso ? null : (n.pedagio || null), pagamento: n.pagamento || '', cargaId: n.cargaId || null },
+        status: 'proposta_enviada', respostaMotorista: null, contraproposta: null, atualizadoEm: agora(),
         historico: (x.historico || []).concat(evento('Proposta enviada ao motorista', op, 'status'))
       }));
     },
@@ -431,9 +502,76 @@
         historico: (x.historico || []).concat(evento('Proposta recusada, seguimos buscando', op, 'status'))
       }));
     },
-    salvarCarga(c) {
+    /** Salva a carga (interna) e publica a versão sem valores do cliente para o app do motorista. */
+    async salvarCarga(c) {
       const id = c.id || novoId();
-      return M.gravar('cargas', id, Object.assign({ status: 'aberta', criadoEm: agora() }, c, { atualizadoEm: agora() }));
+      const salva = await M.gravar('cargas', id, Object.assign({ status: 'aberta', criadoEm: agora(), visivelApp: true }, c, { atualizadoEm: agora(), publicada: 2 }));
+      await M.gravar('cargasPublicas', id, {
+        origemCidade: salva.origemCidade || '', origemUF: salva.origemUF || '',
+        destinoCidade: salva.destinoCidade || '', destinoUF: salva.destinoUF || '',
+        dataCarregamento: salva.dataCarregamento || null, pesoKg: salva.pesoKg || null,
+        carrocerias: salva.carrocerias || [], anoMinimo: salva.anoMinimo || null,
+        exigeRastreador: !!salva.exigeRastreador, escolta: !!salva.escolta,
+        valorOferecido: salva.valorOferecido || null, pedagioIncluso: !!salva.pedagioIncluso, obsMotorista: salva.obsMotorista || '',
+        status: salva.status === 'aberta' && salva.visivelApp !== false ? 'aberta' : 'indisponivel',
+        atualizadoEm: agora()
+      });
+      return salva;
+    },
+
+    /* ----- vitrine de cargas e interesses ----- */
+    observarCargasPublicas(cb) { return M.observar('cargasPublicas', null, cb); },
+    observarMeusInteresses(motoristaId, cb) { return M.observar('interesses', ['motoristaId', motoristaId], cb); },
+    observarInteresses(cb) { return M.observar('interesses', null, cb); },
+    registrarInteresse(carga, motorista, veiculo, negociacao) {
+      const id = carga.id + '_' + motorista.id;
+      return M.gravar('interesses', id, {
+        cargaId: carga.id, motoristaId: motorista.id, motoristaNome: motorista.nome, telefone: motorista.telefone,
+        veiculo: veiculo ? { tipo: veiculo.tipo, carroceria: veiculo.carroceria, capacidadeKg: veiculo.capacidadeKg || null, placa: veiculo.placa || '', ano: veiculo.ano || null, rastreador: !!veiculo.rastreador } : null,
+        status: 'novo', em: agora(),
+        valorPedido: negociacao && negociacao.valor ? negociacao.valor : null, mensagem: negociacao && negociacao.mensagem ? negociacao.mensagem : ''
+      });
+    },
+    marcarInteresse(i, status, op) {
+      return M.gravar('interesses', i.id, { status: status, atendidoPor: op ? op.nome : null, atualizadoEm: agora() });
+    },
+
+    /** Motorista pede outro valor: a proposta fica em negociação até a central responder. */
+    negociarProposta(d, valor, mensagem) {
+      return M.atualizarCom('disponibilidades', d.id, (x) => {
+        if (x.status !== 'proposta_enviada') throw new Error('Esta proposta não está mais aberta.');
+        return {
+          status: 'contraproposta', contraproposta: { valor: valor, mensagem: mensagem || '', em: agora() }, atualizadoEm: agora(),
+          historico: (x.historico || []).concat(evento('Motorista quer negociar: pede ' + util.moeda(valor) + (mensagem ? ' · ' + mensagem : ''), null, 'motorista'))
+        };
+      });
+    },
+    async aceitarContraproposta(d, op) {
+      const valor = d.contraproposta && d.contraproposta.valor;
+      if (!valor) throw new Error('Não há valor pedido pelo motorista.');
+      const a = await SV.atendimento(d.id);
+      await M.gravar('atendimentos', d.id, {
+        negociacao: Object.assign({}, a.negociacao || {}, { repasse: valor, em: agora(), por: op.nome }),
+        notas: (a.notas || []).concat(evento('Contraproposta aceita: ' + util.moeda(valor), op, 'proposta'))
+      });
+      return M.atualizarCom('disponibilidades', d.id, (x) => ({
+        proposta: Object.assign({}, x.proposta || {}, { valorParceiro: valor }),
+        status: 'aguardando_aprovacao', atualizadoEm: agora(),
+        historico: (x.historico || []).concat(evento('Severo aceitou o valor de ' + util.moeda(valor), op, 'status'))
+      }));
+    },
+    /** Resposta do motorista à proposta, pelo próprio app. */
+    responderProposta(d, aceita, motivo, obs) {
+      return M.atualizarCom('disponibilidades', d.id, (x) => {
+        if (x.status !== 'proposta_enviada') throw new Error('Esta proposta não está mais aberta.');
+        const resposta = { aceita: !!aceita, motivo: motivo || '', obs: obs || '', em: agora() };
+        const hist = (x.historico || []).concat(evento(aceita
+          ? 'Motorista aceitou a proposta pelo app'
+          : 'Motorista recusou a proposta pelo app · ' + motivo + (obs ? ' · ' + obs : ''), null, 'motorista'));
+        return aceita
+          ? { status: 'aguardando_aprovacao', respostaMotorista: resposta, atualizadoEm: agora(), historico: hist }
+          : { status: 'em_atendimento', proposta: null, respostaMotorista: resposta, atualizadoEm: agora(), historico: hist };
+      });
     },
 
     /** Requisitos obrigatórios primeiro; depois pontua proximidade, destino e horário. */
@@ -486,7 +624,7 @@
         await M.gravar('disponibilidades', did, {
           motoristaId: mid, motoristaNome: p[0], telefone: p[1], veiculoId: vid,
           veiculo: { tipo: p[2], carroceria: p[3], capacidadeKg: p[4], placa: p[5], ano: p[6], rastreador: p[7] },
-          cidade: p[8], uf: p[9], lat: null, lng: null, localEm: criado,
+          cidade: p[8], uf: p[9], bairro: { Contagem: 'Cidade Industrial', 'Duque de Caxias': 'Jardim Primavera', Campinas: 'Distrito Industrial', Serra: 'Civit II', 'Volta Redonda': 'Retiro', 'Juiz de Fora': 'Benfica' }[p[8]] || '', lat: null, lng: null, localEm: criado,
           quando: { tipo: 'agora', em: criado }, ocupacao: 'vazio', capacidadeLivreKg: null,
           destinos: p[10], aceitaOutras: p[10].length < 2, obs: '', audioUrl: null,
           status: p[12], criadoEm: criado, atualizadoEm: criado, expiraEm: criado + VALIDADE_MS,
@@ -506,7 +644,7 @@
         await SV.salvarCarga({
           cliente: c[0], origemCidade: c[1], origemUF: c[2], destinoCidade: c[3], destinoUF: c[4],
           pesoKg: c[5], carrocerias: c[6], anoMinimo: c[7] || null, exigeRastreador: c[8], escolta: false,
-          valorCliente: c[9], dataCarregamento: t0 + c[10] * 86400000, obs: ''
+          valorOferecido: Math.round(c[9] * 0.8 / 50) * 50, pedagioIncluso: c[10] === 0, dataCarregamento: t0 + c[10] * 86400000, obs: ''
         });
       }
     },

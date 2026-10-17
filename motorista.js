@@ -17,7 +17,8 @@
     form: null,
     grav: null,
     editVeiculo: null,
-    pararObs: []
+    pararObs: [],
+    cargas: [], interesses: {}, filtroCargas: null, recusa: false, negociar: false, negCarga: null
   };
 
   /* ---------- aviso ---------- */
@@ -66,6 +67,8 @@
   function ir(tela) {
     E.tela = tela;
     if (tela !== 'pedido') pararGravacao(true);
+    if (tela !== 'acompanhar') { E.recusa = false; E.negociar = false; }
+    if (tela !== 'cargas' && tela !== 'inicio') E.negCarga = null;
     window.scrollTo(0, 0);
     desenhar();
   }
@@ -86,7 +89,7 @@
   function desenhar() {
     const t = {
       carregando: telaCarregando, cadastro: telaCadastro, veiculo: telaVeiculo,
-      inicio: telaInicio, pedido: telaPedido, acompanhar: telaAcompanhar, veiculos: telaVeiculos
+      inicio: telaInicio, pedido: telaPedido, acompanhar: telaAcompanhar, veiculos: telaVeiculos, cargas: telaCargas
     }[E.tela];
     raiz.innerHTML = t();
     const pos = { pedido: ligarPedido, cadastro: ligarCadastro, veiculo: ligarVeiculo }[E.tela];
@@ -234,16 +237,69 @@
       '<small>' + (temAtivo ? 'Mudou de cidade ou de rota? Atualize.' : 'Toque para avisar a Severo') + '</small>' +
       '<span class="caminhao">' + IC.caminhao.replace('stroke-width="2"', 'stroke-width="1.4"') + '</span></button>' +
       '<p class="promessa">Ficou vazio? Avise a Severo. Nosso time busca sua próxima carga.</p></div>' +
+      vitrineInicio() +
       '<div class="central"><span class="miudo">Central Severo<br>' + esc(C.centralHorario || '') + '</span>' +
       '<a class="btn btn-p" href="https://wa.me/' + U.soDigitos(C.centralWhatsApp) + '" target="_blank" rel="noopener">' + IC.zap + 'WhatsApp</a></div>' +
       '</section>';
+  }
+
+  /* ----- cargas disponíveis ----- */
+  function cargasAvaliadas() {
+    const v = veiculoAtual();
+    const ult = E.pedidos[0] || {};
+    const ref = { veiculo: v || {}, uf: ult.uf, cidade: ult.cidade, destinos: ult.destinos || [], aceitaOutras: ult.aceitaOutras, localEm: ult.localEm };
+    return E.cargas.map((c) => ({ c: c, r: v ? SV.compatibilidade(ref, c) : { ok: true, falhas: [], pontos: [], nota: 0 }, rota: (ref.destinos || []).includes(c.destinoUF) }))
+      .sort((x, y) => (y.r.ok - x.r.ok) || (y.r.nota - x.r.nota) || ((x.c.dataCarregamento || 0) - (y.c.dataCarregamento || 0)));
+  }
+  function cartaoCarga(x) {
+    const c = x.c, ja = E.interesses[c.id];
+    const data = c.dataCarregamento ? new Date(c.dataCarregamento).toLocaleDateString('pt-BR', { weekday: 'short', day: '2-digit', month: '2-digit' }) : 'a combinar';
+    const zap = 'https://wa.me/' + U.soDigitos(C.centralWhatsApp) + '?text=' + encodeURIComponent('Olá! Tenho interesse na carga ' + c.origemCidade + '/' + c.origemUF + ' → ' + c.destinoCidade + '/' + c.destinoUF + ' (' + data + ').');
+    return '<article class="cartao carga-m' + (x.r.ok ? '' : ' fraca') + '">' +
+      '<div class="rota-m"><span class="escudo-mini">' + esc(c.origemUF) + '</span><b>' + esc(c.origemCidade) + '</b><span class="seta">→</span>' +
+      '<span class="escudo-mini">' + esc(c.destinoUF) + '</span><b>' + esc(c.destinoCidade) + '</b></div>' +
+      '<div class="miudo" style="margin:.35rem 0 .6rem">Carrega ' + data + ' · ' + U.toneladas(c.pesoKg) + ' · ' + esc((c.carrocerias || []).join(' ou ') || 'qualquer carroceria') +
+      (c.exigeRastreador ? ' · rastreador' : '') + (c.anoMinimo ? ' · ano ' + c.anoMinimo + '+' : '') + '</div>' +
+      (c.valorOferecido ? '<div class="valor-m num">' + U.moeda(c.valorOferecido) + '<span> para você · ' + (c.pedagioIncluso ? 'pedágio incluso' : 'pedágio à parte') + '</span></div>' : '<div class="miudo" style="margin-bottom:.6rem">Valor a combinar</div>') +
+      (c.obsMotorista ? '<p class="miudo" style="margin:.2rem 0 .6rem">' + esc(c.obsMotorista) + '</p>' : '') +
+      '<div class="chips" style="gap:.4rem;margin-bottom:.8rem">' +
+      (x.r.ok ? '<span class="etq verde">Encaixa no seu veículo</span>' : '<span class="etq cinza">Não encaixa: ' + esc(x.r.falhas.join(', ')) + '</span>') +
+      (x.rota ? '<span class="etq laranja">Sua rota</span>' : '') + '</div>' +
+      (E.negCarga === c.id ? '<div><b>Quanto você pede por esta carga?</b><input class="entrada num" id="negc-valor" inputmode="decimal" placeholder="R$ 0,00" style="margin:.6rem 0">' +
+          '<input class="entrada" id="negc-msg" placeholder="Mensagem para a central (opcional)" style="margin-bottom:.7rem">' +
+          '<div class="audio-acoes"><button class="btn btn-primario btn-p" style="flex:1;min-height:46px" data-acao="enviar-negc" data-id="' + c.id + '">Enviar pedido</button><button class="btn btn-p btn-fantasma" style="min-height:46px" data-acao="voltar-negc">Voltar</button></div></div>' :
+      ja ? '<div class="audio-acoes"><span class="btn btn-p" style="flex:1;pointer-events:none;border-color:var(--verde);color:var(--verde)">' + (ja.valorPedido ? 'Você pediu ' + U.moeda(ja.valorPedido) : 'Interesse enviado') + '</span><a class="btn btn-p" href="' + zap + '" target="_blank" rel="noopener">' + IC.zap + 'Chamar</a></div>'
+          : '<div class="audio-acoes"><button class="btn btn-primario btn-p" style="flex:1;min-height:46px" data-acao="interesse" data-id="' + c.id + '">Tenho interesse</button>' +
+            '<button class="btn btn-p" style="min-height:46px" data-acao="negociar-carga" data-id="' + c.id + '">Quero negociar</button>' +
+            '<a class="btn btn-p" style="min-height:46px" href="' + zap + '" target="_blank" rel="noopener" aria-label="WhatsApp">' + IC.zap + '</a></div>') +
+      '</article>';
+  }
+  function vitrineInicio() {
+    if (!E.cargas.length) return '';
+    const l = cargasAvaliadas(), encaixam = l.filter((x) => x.r.ok).length;
+    return '<div class="bloco"><h2>Cargas na Severo agora <small>' + l.length + ' disponíve' + (l.length === 1 ? 'l' : 'is') + '</small></h2>' +
+      l.slice(0, 2).map(cartaoCarga).join('') +
+      '<button class="btn" style="width:100%;margin-top:.7rem" data-ir="cargas">Ver todas as cargas' + (encaixam ? ' · ' + encaixam + ' encaixam no seu veículo' : '') + '</button></div>';
+  }
+  function telaCargas() {
+    const todas = cargasAvaliadas(), minhas = todas.filter((x) => x.r.ok);
+    const filtro = E.filtroCargas || (minhas.length ? 'meu' : 'todas');
+    const l = filtro === 'meu' ? minhas : todas;
+    return topo('inicio') + '<section class="tela">' +
+      '<h1 class="titulo" style="margin-top:1rem">Cargas disponíveis</h1>' +
+      '<p class="sub">Cargas da Severo esperando veículo. Toque em “Tenho interesse” e a central fala com você.</p>' +
+      '<div class="segmentos" style="margin-bottom:1rem">' +
+      '<button class="chip" data-acao="filtro-cargas" data-valor="meu" aria-pressed="' + (filtro === 'meu') + '">Para meu veículo (' + minhas.length + ')</button>' +
+      '<button class="chip" data-acao="filtro-cargas" data-valor="todas" aria-pressed="' + (filtro === 'todas') + '">Todas (' + todas.length + ')</button></div>' +
+      (l.length ? l.map(cartaoCarga).join('') : '<div class="cartao"><b>Nenhuma carga ' + (filtro === 'meu' ? 'para o seu veículo' : 'disponível') + ' agora.</b><p class="miudo" style="margin:.4rem 0 0">Avise que está vazio e a Severo busca uma para a sua rota.</p></div>') +
+      '<div class="acoes-coluna"><button class="btn btn-primario btn-grande" data-acao="vazio">Avisar que estou vazio</button></div></section>';
   }
 
   /* ----- pedido ----- */
   function novoForm() {
     const ult = E.pedidos[0];
     return {
-      cidade: ult ? ult.cidade : '', uf: ult ? ult.uf : '', lat: null, lng: null, localOk: false,
+      cidade: ult ? ult.cidade : '', uf: ult ? ult.uf : '', bairro: ult ? (ult.bairro || '') : '', lat: null, lng: null, localOk: false,
       quando: 'agora', dataHora: '', ocupacao: 'vazio', livreT: '',
       destinos: ult ? (ult.destinos || []).slice() : [], aceitaOutras: ult ? !!ult.aceitaOutras : false,
       obs: '', audio: null, audioUrl: null, audioSeg: 0
@@ -259,7 +315,8 @@
       '<div class="bloco"><h2>Onde estou</h2>' +
       '<button type="button" class="btn btn-local' + (F.localOk ? ' ok' : '') + '" data-acao="localizar">' + IC.alvo + '<span>' + (F.localOk ? 'Localização registrada' : 'Usar minha localização') + '</span></button>' +
       '<div class="linha-campos"><label class="campo" style="margin:0"><span class="sr">Cidade</span><input name="cidade" placeholder="Cidade" value="' + esc(F.cidade) + '" autocomplete="address-level2"></label>' +
-      '<label class="campo" style="margin:0"><span class="sr">UF</span><select name="uf">' + ufOpts + '</select></label></div></div>' +
+      '<label class="campo" style="margin:0"><span class="sr">UF</span><select name="uf">' + ufOpts + '</select></label></div>' +
+      '<label class="campo" style="margin:.7rem 0 0"><span class="sr">Bairro ou referência</span><input name="bairro" placeholder="Bairro, posto ou rodovia (ex.: Posto Graal, km 32)" value="' + esc(F.bairro) + '"></label></div>' +
 
       '<div class="bloco"><h2>Quando posso carregar</h2>' +
       '<div class="segmentos" data-grupo="quando">' + [['agora', 'Agora'], ['hoje', 'Hoje'], ['amanha', 'Amanhã'], ['data', 'Outra data']].map((o) =>
@@ -335,6 +392,7 @@
   function lerFormulario(f) {
     const F = E.form;
     F.cidade = f.cidade.value.trim();
+    F.bairro = f.bairro.value.trim();
     F.uf = f.uf.value;
     F.dataHora = f.dataHora.value;
     F.livreT = f.livreT.value;
@@ -369,7 +427,7 @@
       id: U.novoId(),
       motorista: { id: E.eu.id, nome: E.eu.nome, telefone: E.eu.telefone },
       veiculo: v,
-      cidade: F.cidade, uf: F.uf, lat: F.lat, lng: F.lng,
+      cidade: F.cidade, uf: F.uf, bairro: F.bairro, lat: F.lat, lng: F.lng,
       quando: montarQuando(F),
       ocupacao: F.ocupacao,
       capacidadeLivreKg: F.ocupacao === 'parcial' ? Math.round(parseFloat(String(F.livreT).replace(',', '.')) * 1000) || null : null,
@@ -406,15 +464,17 @@
       const F = E.form;
       F.lat = +pos.coords.latitude.toFixed(5); F.lng = +pos.coords.longitude.toFixed(5); F.localOk = true;
       try {
-        const r = await fetch('https://nominatim.openstreetmap.org/reverse?format=jsonv2&zoom=10&accept-language=pt-BR&lat=' + F.lat + '&lon=' + F.lng);
+        const r = await fetch('https://nominatim.openstreetmap.org/reverse?format=jsonv2&zoom=16&accept-language=pt-BR&lat=' + F.lat + '&lon=' + F.lng);
         const j = await r.json();
         const a = j.address || {};
         const cidade = a.city || a.town || a.village || a.municipality || a.county || '';
         const uf = (a['ISO3166-2-lvl4'] || '').replace('BR-', '');
+        const bairro = a.suburb || a.neighbourhood || a.quarter || a.city_district || a.hamlet || a.road || '';
         const f = $('#f-ped');
         if (cidade) f.cidade.value = cidade;
+        if (bairro) f.bairro.value = bairro;
         if (uf && SV.UFS.includes(uf)) f.uf.value = uf;
-        aviso(cidade ? 'Você está em ' + cidade + (uf ? '/' + uf : '') + '. Confira e corrija se precisar.' : 'Localização registrada. Confira a cidade.');
+        aviso(cidade ? 'Você está em ' + (bairro ? bairro + ', ' : '') + cidade + (uf ? '/' + uf : '') + '. Confira e corrija se precisar.' : 'Localização registrada. Confira a cidade.');
       } catch (e) {
         aviso('Localização registrada. Digite a cidade para conferir.');
       }
@@ -499,14 +559,31 @@
     if (!p) return topo('inicio') + '<section class="tela"><div class="estado-grande"><h1 class="titulo">Nenhum pedido ainda</h1><p class="sub">Quando ficar vazio, avise pelo botão da tela inicial.</p></div></section>';
     const st = SV.statusEfetivo(p), S = SV.STATUS[st];
     const passos = ['Recebido', 'Em atendimento', 'Proposta', 'Carga fechada'];
-    const idx = { disponivel: 0, em_atendimento: 1, proposta_enviada: 2, aguardando_aprovacao: 2, carga_fechada: 3, carregado: 3 }[st];
+    const idx = { disponivel: 0, em_atendimento: 1, proposta_enviada: 2, contraproposta: 2, aguardando_aprovacao: 2, carga_fechada: 3, carregado: 3 }[st];
     const trilha = idx == null ? '' : '<ol class="trilha">' + passos.map((n, i) =>
       '<li class="' + (i < idx || (i === idx && idx === 3) ? 'feito' : i === idx ? 'agora' : '') + '">' + n + '</li>').join('') + '</ol>';
     const pr = p.proposta;
-    const propostaHtml = pr && (st === 'proposta_enviada' || st === 'aguardando_aprovacao' || st === 'carga_fechada') ?
+    const propostaHtml = pr && (st === 'proposta_enviada' || st === 'contraproposta' || st === 'aguardando_aprovacao' || st === 'carga_fechada') ?
       '<div class="cartao proposta-box"><span class="miudo">Proposta da Severo</span><div class="valor num">' + U.moeda(pr.valorParceiro) + '</div>' +
       (pr.rota ? '<b>' + esc(pr.rota) + '</b><br>' : '') +
-      '<span class="miudo">' + (pr.pedagio ? 'Pedágio: ' + U.moeda(pr.pedagio) + '. ' : '') + esc(pr.pagamento || '') + '</span></div>' : '';
+      '<span class="miudo">' + (pr.pedagioIncluso ? 'Pedágio incluso no valor. ' : 'Pedágio pago à parte' + (pr.pedagio ? ' (' + U.moeda(pr.pedagio) + ')' : '') + '. ') + esc(pr.pagamento || '') + '</span>' +
+      (st === 'contraproposta' && p.contraproposta ? '<div class="cartao" style="margin-top:1rem;background:var(--asfalto)"><span class="miudo">Você pediu</span><div class="valor-m num" style="margin:.2rem 0">' + U.moeda(p.contraproposta.valor) + '</div>' +
+        (p.contraproposta.mensagem ? '<span class="miudo">“' + esc(p.contraproposta.mensagem) + '”</span>' : '') + '<p class="miudo" style="margin:.5rem 0 0">Aguardando a resposta da Severo.</p></div>' : '') +
+      (st === 'proposta_enviada' && E.negociar
+        ? '<div style="margin-top:1rem"><b>Quanto você pede pelo frete?</b>' +
+          '<input class="entrada num" id="neg-valor" inputmode="decimal" placeholder="R$ 0,00" style="margin:.6rem 0">' +
+          '<input class="entrada" id="neg-msg" placeholder="Explique, se quiser (ex.: rota tem muito pedágio)" style="margin-bottom:.7rem">' +
+          '<div class="audio-acoes"><button class="btn btn-primario" style="flex:1" data-acao="enviar-negociacao">Enviar pedido</button><button class="btn btn-fantasma" data-acao="voltar-negociacao">Voltar</button></div></div>'
+        : '') +
+      (st === 'proposta_enviada' && !E.negociar ? (E.recusa
+        ? '<div style="margin-top:1rem"><b>Por que não serve?</b><div class="chips" data-grupo="motivo" style="margin:.6rem 0">' +
+          SV.MOTIVOS_RECUSA.map((m) => '<button type="button" class="chip" data-valor="' + esc(m) + '" aria-pressed="false">' + esc(m) + '</button>').join('') + '</div>' +
+          '<input class="entrada" id="recusa-obs" placeholder="Quer dizer algo ao operador? (opcional)" style="margin-bottom:.7rem">' +
+          '<div class="audio-acoes"><button class="btn btn-primario" data-acao="enviar-recusa">Enviar resposta</button><button class="btn btn-fantasma" data-acao="voltar-recusa">Voltar</button></div></div>'
+        : '<div class="audio-acoes" style="margin-top:1rem"><button class="btn btn-primario" style="flex:1" data-acao="aceitar">Aceitar</button><button class="btn" data-acao="negociar">Quero negociar</button></div>' +
+          '<button class="btn btn-fantasma" style="width:100%;margin-top:.4rem" data-acao="recusar">Recusar proposta</button>')
+      : st === 'aguardando_aprovacao' && p.respostaMotorista && p.respostaMotorista.aceita ? '<p class="miudo" style="margin:.6rem 0 0">Você aceitou ' + U.desde(p.respostaMotorista.em) + '.</p>' : '') +
+      '</div>' : '';
     const podeRenovar = ativo(p);
     const quaseVencendo = podeRenovar && p.expiraEm - Date.now() < 3 * 3600000;
     return topo('inicio') + '<section class="tela"><div class="estado-grande">' +
@@ -527,7 +604,7 @@
     const v = p.veiculo || {};
     const dests = (p.destinos || []).length ? '<span class="escudos-mini">' + p.destinos.map((u) => '<span class="escudo-mini">' + u + '</span>').join('') + '</span>' : '';
     const html = '<dl class="resumo">' +
-      '<dt>Onde</dt><dd>' + esc(p.cidade || 'Pelo áudio') + (p.uf ? '/' + esc(p.uf) : '') + '</dd>' +
+      '<dt>Onde</dt><dd>' + (p.bairro ? esc(p.bairro) + '<br>' : '') + esc(p.cidade || 'Pelo áudio') + (p.uf ? '/' + esc(p.uf) : '') + '</dd>' +
       '<dt>Veículo</dt><dd>' + esc(v.tipo || '') + ' · ' + esc(v.carroceria || '') + ' · ' + U.toneladas(p.capacidadeLivreKg || v.capacidadeKg) + '</dd>' +
       '<dt>Carregar</dt><dd>' + U.quando(p.quando) + '</dd>' +
       '<dt>Destinos</dt><dd>' + (dests || '—') + (p.aceitaOutras ? '<br><span class="miudo">aceita outras rotas</span>' : '') + '</dd>' +
@@ -544,6 +621,8 @@
     if (ed) { e.stopPropagation(); E.editVeiculo = Object.assign({}, E.veiculos.find((v) => v.id === ed.dataset.editar)); return ir('veiculo'); }
     const esc2 = e.target.closest('[data-escolher]');
     if (esc2) { localStorage.setItem(CHAVE_VEIC, esc2.dataset.escolher); aviso('Veículo selecionado.'); return ir('inicio'); }
+    const chipMotivo = e.target.closest('[data-grupo="motivo"] .chip');
+    if (chipMotivo) { $$('.chip', chipMotivo.parentElement).forEach((x) => x.setAttribute('aria-pressed', String(x === chipMotivo))); return; }
     const b = e.target.closest('[data-acao]');
     if (!b) return;
     const acao = b.dataset.acao;
@@ -564,6 +643,52 @@
     }
     if (acao === 'novo-veiculo') { E.editVeiculo = {}; return ir('veiculo'); }
     if (acao === 'tentar') { if (!navigator.onLine) return aviso('Ainda sem internet. Vamos tentar sozinhos quando voltar.'); b.disabled = true; return enviarFila(); }
+    if (acao === 'aceitar') {
+      const p = pedidoAtual(), pr = p.proposta || {};
+      if (!confirm('Aceitar ' + U.moeda(pr.valorParceiro) + (pr.rota ? ' para ' + pr.rota : '') + '?')) return;
+      try { await SV.responderProposta(p, true); aviso('Proposta aceita. A Severo vai conferir os documentos e confirmar.'); if (navigator.vibrate) navigator.vibrate([20, 40, 20]); }
+      catch (err) { aviso(msgErro(err), true); }
+      return;
+    }
+    if (acao === 'recusar') { E.recusa = true; return desenhar(); }
+    if (acao === 'negociar') { E.negociar = true; desenhar(); const i = $('#neg-valor'); if (i) i.focus(); return; }
+    if (acao === 'voltar-negociacao') { E.negociar = false; return desenhar(); }
+    if (acao === 'enviar-negociacao') {
+      const v = parseFloat(String($('#neg-valor').value).replace(/[^\d,.-]/g, '').replace(/\./g, '').replace(',', '.'));
+      if (!v || v <= 0) return aviso('Digite o valor que você pede.', true);
+      try { await SV.negociarProposta(pedidoAtual(), v, ($('#neg-msg').value || '').trim()); E.negociar = false; aviso('Pedido de negociação enviado. A Severo vai responder.'); desenhar(); }
+      catch (err) { aviso(msgErro(err), true); }
+      return;
+    }
+    if (acao === 'negociar-carga') { E.negCarga = b.dataset.id; desenhar(); const i = $('#negc-valor'); if (i) i.focus(); return; }
+    if (acao === 'voltar-negc') { E.negCarga = null; return desenhar(); }
+    if (acao === 'enviar-negc') {
+      const c = E.cargas.find((x) => x.id === b.dataset.id);
+      const v = parseFloat(String($('#negc-valor').value).replace(/[^\d,.-]/g, '').replace(/\./g, '').replace(',', '.'));
+      if (!c) return;
+      if (!v || v <= 0) return aviso('Digite o valor que você pede.', true);
+      b.disabled = true;
+      try { await SV.registrarInteresse(c, E.eu, veiculoAtual(), { valor: v, mensagem: ($('#negc-msg').value || '').trim() }); E.negCarga = null; aviso('Pedido enviado. A central vai falar com você.'); }
+      catch (err) { b.disabled = false; aviso(msgErro(err), true); }
+      return;
+    }
+    if (acao === 'voltar-recusa') { E.recusa = false; return desenhar(); }
+    if (acao === 'enviar-recusa') {
+      const m = $('[data-grupo="motivo"] .chip[aria-pressed="true"]');
+      if (!m) return aviso('Escolha o motivo.', true);
+      try { await SV.responderProposta(pedidoAtual(), false, m.dataset.valor, ($('#recusa-obs').value || '').trim()); E.recusa = false; aviso('Resposta enviada. Seguimos buscando outra carga para você.'); desenhar(); }
+      catch (err) { aviso(msgErro(err), true); }
+      return;
+    }
+    if (acao === 'filtro-cargas') { E.filtroCargas = b.dataset.valor; return desenhar(); }
+    if (acao === 'interesse') {
+      const c = E.cargas.find((x) => x.id === b.dataset.id);
+      if (!c) return;
+      b.disabled = true;
+      try { await SV.registrarInteresse(c, E.eu, veiculoAtual()); aviso('Interesse enviado. A central vai falar com você.'); if (navigator.vibrate) navigator.vibrate(20); }
+      catch (err) { b.disabled = false; aviso(msgErro(err), true); }
+      return;
+    }
     if (acao === 'renovar') {
       try { await SV.renovar(pedidoAtual()); aviso('Pronto. Seu aviso vale por mais ' + SV.validadeHoras + ' horas.'); }
       catch (err) { aviso(msgErro(err), true); }
@@ -624,7 +749,15 @@
           aviso(SV.STATUS[depois].motorista + '. ' + SV.STATUS[depois].passo);
           if (navigator.vibrate) navigator.vibrate([30, 60, 30]);
         }
-        if (E.tela === 'inicio' || E.tela === 'acompanhar') desenhar();
+        if (E.tela === 'inicio' || (E.tela === 'acompanhar' && !E.recusa && !E.negociar)) desenhar();
+      }),
+      SV.observarCargasPublicas((l) => {
+        E.cargas = l.filter((c) => c.status === 'aberta' && (!c.dataCarregamento || c.dataCarregamento > Date.now() - 86400000));
+        if ((E.tela === 'inicio' || E.tela === 'cargas') && !E.negCarga) desenhar();
+      }),
+      SV.observarMeusInteresses(E.eu.id, (l) => {
+        E.interesses = {}; l.forEach((i) => { E.interesses[i.cargaId] = i; });
+        if (E.tela === 'cargas' || E.tela === 'inicio') desenhar();
       })
     ];
   }

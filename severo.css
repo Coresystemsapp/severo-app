@@ -391,3 +391,32 @@ dialog.dlg::backdrop { background: rgba(5,8,12,.7); backdrop-filter: blur(3px); 
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation: none !important; transition: none !important; }
 }
+
+/* vitrine de cargas (motorista) */
+.carga-m { margin-bottom: .7rem; }
+.carga-m.fraca { opacity: .72; }
+.rota-m { display: flex; flex-wrap: wrap; align-items: center; gap: .4rem; font: 700 1.25rem/1.2 var(--f-display); }
+.rota-m .escudo-mini { width: 28px; height: 29px; font-size: .78rem; }
+.rota-m .seta { color: var(--laranja); margin: 0 .15rem; }
+.valor-m { font: 700 1.9rem/1 var(--f-display); color: var(--laranja-forte); margin-bottom: .6rem; }
+.valor-m span { font: 500 .9rem var(--f-texto); color: var(--texto-2); margin-left: .3rem; }
+.chips .etq { white-space: normal; }
+#lista-cargas { overflow-x: auto; }
+#lista-cargas .tabela td, #lista-cargas .tabela th { padding: 10px 10px; }
+#lista-cargas .tabela td .etq { margin-top: 4px; }
+
+/* administração */
+.pn-corpo.unica { grid-template-columns: 1fr; }
+.pn-admin { overflow-y: auto; padding: 20px 26px 60px; min-height: 0; }
+.adm-topo { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 18px; }
+.adm-acoes { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; margin-bottom: 14px; }
+.adm-numeros { display: grid; grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); gap: 1px; background: var(--cabine); box-shadow: inset 0 0 0 1px var(--linha); border: 1px solid var(--linha); border-radius: 12px; overflow: hidden; }
+.adm-numeros > div { background: var(--cabine); padding: 14px 16px; outline: 1px solid var(--linha); }
+.adm-numeros b { display: block; font: 700 1.8rem/1 var(--f-display); }
+.adm-numeros span { font-size: .8rem; color: var(--texto-3); }
+.adm-col { display: grid; grid-template-columns: repeat(auto-fit, minmax(380px, 1fr)); gap: 0 28px; }
+.barra { display: grid; grid-template-columns: 140px 1fr 36px; align-items: center; gap: 10px; margin-bottom: 8px; font-size: .9rem; }
+.barra span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--texto-2); }
+.barra i { display: block; height: 8px; border-radius: 4px; background: var(--laranja); }
+.barra b { text-align: right; }
+.ponto-on { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: var(--verde); margin-right: 8px; box-shadow: 0 0 0 3px var(--verde-tinta); }
