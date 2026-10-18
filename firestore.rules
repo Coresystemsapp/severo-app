@@ -19,6 +19,13 @@ service cloud.firestore {
     }
     function central() { return equipe() && perfil().papel in ['admin', 'gestao', 'operador', 'financeiro']; }
     function admin() { return equipe() && perfil().papel == 'admin'; }
+    function gestao() { return equipe() && perfil().papel in ['admin', 'gestao']; }
+    // motorista liberado: tem cadastro e não está bloqueado
+    function liberado() {
+      return logado()
+        && exists(/databases/$(db)/documents/motoristas/$(eu()))
+        && get(/databases/$(db)/documents/motoristas/$(eu())).data.get('bloqueado', false) == false;
+    }
 
     match /usuarios/{uid} {
       allow read: if logado() && (eu() == uid || central());
@@ -36,27 +43,39 @@ service cloud.firestore {
 
     match /motoristas/{uid} {
       allow read: if logado() && (eu() == uid || central());
-      allow create: if logado() && eu() == uid && request.resource.data.cadastro == 'pendente';
+      allow create: if logado() && eu() == uid && request.resource.data.cadastro == 'pendente'
+        && request.resource.data.get('bloqueado', false) == false
+        && !exists(/databases/$(db)/documents/bloqueios/$(request.resource.data.telefone));
       allow update: if central()
-        || (logado() && eu() == uid && !request.resource.data.diff(resource.data).affectedKeys().hasAny(['cadastro']));
+        || (liberado() && eu() == uid
+            && !request.resource.data.diff(resource.data).affectedKeys().hasAny(['cadastro', 'bloqueado', 'bloqueadoEm', 'bloqueadoPor', 'motivoBloqueio', 'excluidoEm', 'excluidoPor']));
+      allow delete: if gestao();
+    }
+
+    // números bloqueados: o app do motorista só confere o próprio número
+    match /bloqueios/{tel} {
+      allow get: if logado();
+      allow list: if central();
+      allow write: if gestao();
     }
 
     match /veiculos/{id} {
       allow read: if logado() && (resource.data.motoristaId == eu() || central());
-      allow create: if logado() && request.resource.data.motoristaId == eu();
+      allow create: if liberado() && request.resource.data.motoristaId == eu();
       allow update: if central()
-        || (logado() && resource.data.motoristaId == eu() && request.resource.data.motoristaId == eu());
+        || (liberado() && resource.data.motoristaId == eu() && request.resource.data.motoristaId == eu());
+      allow delete: if gestao();
     }
 
     match /disponibilidades/{id} {
       allow read: if logado() && (resource.data.motoristaId == eu() || central());
-      allow create: if logado()
+      allow create: if liberado()
         && request.resource.data.motoristaId == eu()
         && request.resource.data.status == 'disponivel'
         && request.resource.data.responsavelId == null;
       // motorista: atualiza o aviso, cancela, e responde à proposta (aceitar, negociar ou recusar)
       allow update: if central()
-        || (logado() && resource.data.motoristaId == eu()
+        || (liberado() && resource.data.motoristaId == eu()
             && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
                  'motoristaNome', 'telefone', 'veiculoId', 'veiculo', 'cidade', 'uf', 'bairro', 'lat', 'lng', 'localEm', 'quando',
                  'ocupacao', 'capacidadeLivreKg', 'destinos', 'aceitaOutras', 'obs', 'audioUrl', 'expiraEm',
@@ -67,13 +86,14 @@ service cloud.firestore {
                     && request.resource.data.status in ['aguardando_aprovacao', 'em_atendimento', 'contraproposta']))
             && (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['proposta'])
                 || request.resource.data.proposta == null));
-      allow delete: if admin();
+      allow delete: if gestao();
     }
 
     // áudios salvos sem Storage (plano gratuito)
     match /audios/{dispId} {
       allow read: if logado() && (resource.data.motoristaId == eu() || central());
-      allow create, update: if logado() && request.resource.data.motoristaId == eu();
+      allow create, update: if liberado() && request.resource.data.motoristaId == eu();
+      allow delete: if gestao();
     }
 
     // cargas: operações só lê
@@ -91,7 +111,8 @@ service cloud.firestore {
     // "tenho interesse" / "quero negociar" do motorista em uma carga
     match /interesses/{id} {
       allow read: if logado() && (resource.data.motoristaId == eu() || central());
-      allow create, update: if central() || (logado() && request.resource.data.motoristaId == eu());
+      allow create, update: if central() || (liberado() && request.resource.data.motoristaId == eu());
+      allow delete: if gestao();
     }
 
     match /atendimentos/{id} { allow read, write: if central(); }

@@ -3,7 +3,7 @@
  * Fontes e SDK do Firebase: cache primeiro.
  * Firestore, Storage e mapas: não passam por aqui.
  */
-const VERSAO = 'severo-v3';
+const VERSAO = 'severo-v4';
 const ESSENCIAIS = ['./', 'index.html', 'severo.css', 'config.js', 'icones.js', 'dados.js', 'motorista.js',
   'logo-severo.png', 'icon-192.png', 'manifest.webmanifest'];
 

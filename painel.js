@@ -13,8 +13,9 @@
     op: null, fila: [], atend: {}, cargas: [],
     sel: null, selCarga: null, aba: 'fila',
     f: { grupo: 'ativos', busca: '', uf: '', carroceria: '', destino: '', meus: false, ordem: 'espera' },
-    vistos: null, parar: [], statusAnt: null, usuarios: [], acessos: [], motoristas: [], veiculos: [], adm: 'geral', buscaMot: '', interesses: [], intVistos: null, sincronizadas: {}
+    vistos: null, parar: [], statusAnt: null, usuarios: [], acessos: [], motoristas: [], veiculos: [], bloqueios: [], adm: 'geral', buscaMot: '', interesses: [], intVistos: null, sincronizadas: {}
   };
+  const lugar = (cid, uf) => (cid ? cid + '/' : '') + (uf || '?');
   const papel = () => (P.op && P.op.papel) || '';
   const ehAdmin = () => papel() === 'admin';
   const ehGestao = () => papel() === 'gestao' || papel() === 'admin';
@@ -134,7 +135,8 @@
         SV.observarUsuarios((l) => { P.usuarios = l; atualizar(); }),
         SV.observarAcessos((l) => { P.acessos = l; if (P.aba === 'admin') desenharAdmin(); }),
         SV.observarMotoristas((l) => { P.motoristas = l; if (P.aba === 'admin') desenharAdmin(); }),
-        SV.observarTodosVeiculos((l) => { P.veiculos = l; if (P.aba === 'admin') desenharAdmin(); })
+        SV.observarTodosVeiculos((l) => { P.veiculos = l; if (P.aba === 'admin') desenharAdmin(); }),
+        SV.observarBloqueios((l) => { P.bloqueios = l.sort((a, b) => (b.em || 0) - (a.em || 0)); if (P.aba === 'admin') desenharAdmin(); })
       );
     }
   }
@@ -199,7 +201,7 @@
     } else {
       corpo.innerHTML = '<section class="pn-coluna">' +
         '<div class="pn-filtros">' + (soCargas() ? '<span class="miudo">Cargas disponíveis na Severo. Acesso somente para consulta.</span>'
-          : '<button class="btn btn-p btn-primario" data-acao="nova-carga">' + IC.mais + 'Nova carga</button><span class="miudo">Cadastre a demanda e veja quem encaixa.</span>') + '</div>' +
+          : '<button class="btn btn-p btn-primario" data-acao="carga-voz">' + IC.mic + 'Lançar por áudio</button><button class="btn btn-p" data-acao="nova-carga">' + IC.mais + 'Nova carga</button><span class="miudo">Fale ou cole a mensagem do WhatsApp.</span>') + '</div>' +
         '<div class="pn-lista" id="lista-cargas"></div></section>' +
         '<section class="pn-detalhe" id="det-carga"></section>';
     }
@@ -382,7 +384,8 @@
       '<div class="det-topo"><div><h2 class="det-nome">' + esc(d.motoristaNome) + '</h2>' +
       '<div class="det-sub num">' + esc(U.telefone(d.telefone)) + '</div></div>' +
       '<div class="det-contatos"><a class="btn btn-p" href="tel:+' + U.whats(d.telefone) + '">' + IC.fone + 'Ligar</a>' +
-      '<a class="btn btn-p" href="' + zap + '" target="_blank" rel="noopener" data-contato="WhatsApp">' + IC.zap + 'WhatsApp</a></div></div>' +
+      '<a class="btn btn-p" href="' + zap + '" target="_blank" rel="noopener" data-contato="WhatsApp">' + IC.zap + 'WhatsApp</a>' +
+      (ehGestao() ? '<button class="btn btn-p btn-fantasma btn-perigo" data-acao="bloquear-disp">Bloquear</button>' : '') + '</div></div>' +
 
       '<div class="det-faixa"><span class="etq ' + S.tom + '">' + S.rotulo + '</span>' +
       '<span class="miudo">' + (d.responsavelNome ? 'Com ' + esc(d.responsavelNome) : 'Sem responsável') + '</span>' +
@@ -450,10 +453,10 @@
       P.cargas.map((c) => {
         const n = ativos.filter((d) => SV.compatibilidade(d, c).ok).length;
         return '<tr class="clicavel" data-carga="' + c.id + '" aria-current="' + (P.selCarga === c.id) + '">' +
-          '<td><b>' + esc(c.origemUF) + ' → ' + esc(c.destinoUF) + '</b><div class="miudo">' + esc(c.origemCidade) + ' → ' + esc(c.destinoCidade) + '</div></td>' +
-          '<td>' + esc(c.cliente) + '</td><td class="num">' + U.toneladas(c.pesoKg) + '</td>' +
+          '<td><b>' + esc(c.origemUF) + ' → ' + esc(c.destinoUF) + '</b><div class="miudo">' + esc(c.origemCidade || c.origemUF) + ' → ' + esc(c.destinoCidade || c.destinoUF) + '</div></td>' +
+          '<td>' + (esc(c.cliente) || '<span class="miudo">não informado</span>') + (c.produto ? '<div class="miudo">' + esc(c.produto) + '</div>' : '') + '</td><td class="num">' + U.toneladas(c.pesoKg) + '</td>' +
           '<td class="num">' + (c.valorOferecido ? U.moeda(c.valorOferecido) + '<div class="miudo">' + (c.pedagioIncluso ? 'c/ pedágio' : 's/ pedágio') + '</div>' : '<span class="miudo">a combinar</span>') + '</td>' +
-          '<td><span class="etq ' + (c.status === 'aberta' ? 'azul' : c.status === 'fechada' ? 'verde' : 'cinza') + '">' + ({ aberta: 'Aberta', fechada: 'Fechada', cancelada: 'Cancelada' }[c.status] || c.status) + '</span></td>' +
+          '<td><span class="etq ' + (c.status === 'aberta' ? 'azul' : c.status === 'fechada' ? 'verde' : c.status === 'rascunho' ? 'amarelo' : 'cinza') + '">' + ({ aberta: 'Aberta', fechada: 'Fechada', cancelada: 'Cancelada', rascunho: 'Rascunho' }[c.status] || c.status) + '</span></td>' +
           (soCargas() ? '</tr>' : '<td class="num">' + (c.status === 'aberta' ? n : '—') + '</td>' +
           '<td class="num">' + (function () { const q = P.interesses.filter((i) => i.cargaId === c.id && i.status !== 'descartado'); const novos = q.filter((i) => i.status === 'novo').length; return q.length ? q.length + (novos ? ' <span class="etq laranja">' + novos + ' novo' + (novos > 1 ? 's' : '') + '</span>' : '') : '—'; })() + '</td></tr>');
       }).join('') + '</tbody></table>';
@@ -481,18 +484,22 @@
     if (!c) { el.innerHTML = '<div class="pn-vazio" style="padding-top:80px">Escolha uma carga para ver os motoristas que encaixam.</div>'; return; }
     const ativos = P.fila.filter((d) => SV.ATIVOS.includes(d.status) && !SV.vencida(d))
       .map((d) => ({ d: d, r: SV.compatibilidade(d, c) })).sort((x, y) => (y.r.ok - x.r.ok) || (y.r.nota - x.r.nota));
-    el.innerHTML = '<div class="det-topo"><div><h2 class="det-nome">' + esc(c.origemCidade) + ' → ' + esc(c.destinoCidade) + '</h2>' +
-      '<div class="det-sub">' + esc(c.cliente) + '</div></div>' +
-      '<div class="det-contatos">' + (soCargas() ? '' : bt('editar-carga', 'Editar') + (c.status === 'aberta' ? bt('cancelar-carga', 'Cancelar carga', 'btn-fantasma btn-perigo') : '')) + '</div></div>' +
+    const dia = (ms) => ms ? new Date(ms).toLocaleDateString('pt-BR', { weekday: 'short', day: '2-digit', month: '2-digit' }) : '—';
+    el.innerHTML = '<div class="det-topo"><div><h2 class="det-nome">' + esc(c.origemCidade || c.origemUF) + ' → ' + esc(c.destinoCidade || c.destinoUF) + '</h2>' +
+      '<div class="det-sub">' + [esc(c.produto ? 'Carga de ' + c.produto.toLowerCase() : ''), esc(c.cliente)].filter(Boolean).join(' · ') + '</div></div>' +
+      '<div class="det-contatos">' + (soCargas() ? '' : (c.status === 'rascunho' ? bt('editar-carga', 'Revisar e publicar', 'btn-primario') : bt('editar-carga', 'Editar')) + (c.status === 'aberta' || c.status === 'rascunho' ? bt('cancelar-carga', c.status === 'rascunho' ? 'Descartar' : 'Cancelar carga', 'btn-fantasma btn-perigo') : '')) + '</div></div>' +
+      (c.status === 'rascunho' ? '<div class="det-alerta" style="margin-top:12px">Rascunho lançado por áudio: ainda não aparece para os motoristas. Revise e publique.</div>' : '') +
       '<dl class="det-grade" style="margin-top:18px">' +
-      '<div><dt>Origem</dt><dd>' + esc(c.origemCidade) + '/' + esc(c.origemUF) + '</dd></div>' +
-      '<div><dt>Destino</dt><dd>' + esc(c.destinoCidade) + '/' + esc(c.destinoUF) + '</dd></div>' +
-      '<div><dt>Carregamento</dt><dd>' + (c.dataCarregamento ? new Date(c.dataCarregamento).toLocaleDateString('pt-BR') : '—') + '</dd></div>' +
+      '<div><dt>Origem</dt><dd>' + esc(lugar(c.origemCidade, c.origemUF)) + '</dd></div>' +
+      '<div><dt>Destino</dt><dd>' + esc(lugar(c.destinoCidade, c.destinoUF)) + '</dd></div>' +
+      '<div><dt>Carregamento</dt><dd>' + dia(c.dataCarregamento) + '</dd></div>' +
+      '<div><dt>Descarga</dt><dd>' + dia(c.dataDescarga) + '</dd></div>' +
       '<div><dt>Peso</dt><dd>' + U.toneladas(c.pesoKg) + '</dd></div>' +
-      '<div><dt>Carroceria</dt><dd>' + esc((c.carrocerias || []).join(', ') || 'Qualquer') + '</dd></div>' +
+      '<div><dt>Veículo</dt><dd>' + esc([c.tipoVeiculo, (c.carrocerias || []).join(', ')].filter(Boolean).join(' · ') || 'Qualquer') + '</dd></div>' +
+      '<div><dt>Pagamento</dt><dd>' + esc(c.pagamento || '—') + '</dd></div>' +
       '<div><dt>Exigências</dt><dd>' + ([c.anoMinimo ? 'ano ' + c.anoMinimo + '+' : '', c.exigeRastreador ? 'rastreador' : '', c.escolta ? 'escolta' : ''].filter(Boolean).join(', ') || 'Nenhuma') + '</dd></div>' +
       '<div><dt>Frete ao motorista</dt><dd class="num">' + (c.valorOferecido ? U.moeda(c.valorOferecido) + '<div class="miudo">' + (c.pedagioIncluso ? 'pedágio incluso' : 'pedágio à parte') + '</div>' : 'a combinar') + '</dd></div>' +
-      '<div><dt>No app do motorista</dt><dd>' + (c.status === 'aberta' && c.visivelApp !== false ? 'Visível' : 'Oculta') + '</dd></div>' +
+      '<div class="largo"><dt>No app do motorista</dt><dd>' + (c.status === 'aberta' && c.visivelApp !== false ? 'Visível' : 'Oculta') + '</dd></div>' +
       (c.obsMotorista ? '<div class="largo"><dt>Observação para o motorista</dt><dd>' + esc(c.obsMotorista) + '</dd></div>' : '') +
       (c.obs && !soCargas() ? '<div class="largo"><dt>Observações internas</dt><dd>' + esc(c.obs) + '</dd></div>' : '') +
       '</dl>' +
@@ -592,7 +599,7 @@
       .sort((x, y) => ((avisos[y.id] || [])[0] ? Math.max.apply(null, avisos[y.id].map((d) => d.criadoEm)) : y.criadoEm) - ((avisos[x.id] || [])[0] ? Math.max.apply(null, avisos[x.id].map((d) => d.criadoEm)) : x.criadoEm));
     return '<div class="adm-acoes"><input class="entrada" id="adm-busca" placeholder="Buscar por nome, telefone ou placa" value="' + esc(P.buscaMot) + '" style="max-width:360px;min-height:40px;font-size:.95rem">' +
       '<span class="miudo">' + P.motoristas.length + ' motoristas · ' + P.veiculos.length + ' veículos</span></div>' +
-      '<div style="overflow-x:auto"><table class="tabela"><thead><tr><th>Motorista</th><th>Veículos</th><th>Cadastro</th><th>Último aviso</th><th>Avisos</th><th>Fechadas</th><th>Agora</th></tr></thead><tbody>' +
+      '<div style="overflow-x:auto"><table class="tabela"><thead><tr><th>Motorista</th><th>Veículos</th><th>Cadastro</th><th>Último aviso</th><th>Avisos</th><th>Fechadas</th><th>Agora</th><th></th></tr></thead><tbody>' +
       (l.length ? l.map((m) => {
         const av = (avisos[m.id] || []).sort((x, y) => y.criadoEm - x.criadoEm), ult = av[0];
         const vs = veics[m.id] || [];
@@ -601,8 +608,14 @@
           '<td class="num">' + quando(m.criadoEm) + '</td>' +
           '<td>' + (ult ? esc(ult.cidade || 'áudio') + (ult.uf ? '/' + esc(ult.uf) : '') + '<div class="miudo">' + U.desde(ult.criadoEm) + '</div>' : '<span class="miudo">nunca</span>') + '</td>' +
           '<td class="num">' + av.length + '</td><td class="num">' + av.filter((d) => d.fechadoEm).length + '</td>' +
-          '<td>' + (ult ? '<span class="etq ' + SV.STATUS[SV.statusEfetivo(ult)].tom + '">' + SV.STATUS[SV.statusEfetivo(ult)].rotulo + '</span>' : '') + '</td></tr>';
-      }).join('') : '<tr><td colspan="7" class="miudo">Nenhum motorista encontrado.</td></tr>') + '</tbody></table></div>';
+          '<td>' + (m.bloqueado ? '<span class="etq vermelho">' + (m.excluidoEm ? 'Excluído e bloqueado' : 'Bloqueado') + '</span>' : ult ? '<span class="etq ' + SV.STATUS[SV.statusEfetivo(ult)].tom + '">' + SV.STATUS[SV.statusEfetivo(ult)].rotulo + '</span>' : '') + '</td>' +
+          '<td style="white-space:nowrap">' + (m.bloqueado ? '<button class="btn btn-p btn-fantasma" data-mot-desbloq="' + m.id + '">Desbloquear</button>'
+            : '<button class="btn btn-p btn-fantasma btn-perigo" data-mot-bloq="' + m.id + '">Bloquear</button>') +
+          (m.excluidoEm ? '' : '<button class="btn btn-p btn-fantasma btn-perigo" data-mot-excluir="' + m.id + '">Excluir</button>') + '</td></tr>';
+      }).join('') : '<tr><td colspan="8" class="miudo">Nenhum motorista encontrado.</td></tr>') + '</tbody></table></div>' +
+      (P.bloqueios.length ? '<div class="det-sec"><h3>Números bloqueados <small>não conseguem se cadastrar de novo</small></h3><div style="overflow-x:auto"><table class="tabela"><thead><tr><th>Telefone</th><th>Nome</th><th>Motivo</th><th>Bloqueado por</th><th></th></tr></thead><tbody>' +
+        P.bloqueios.map((b) => '<tr><td class="num">' + esc(U.telefone(b.telefone)) + '</td><td>' + esc(b.nome || '—') + '</td><td>' + esc(b.motivo || '—') + '</td><td>' + esc(b.por || '') + '<div class="miudo">' + quando(b.em) + '</div></td>' +
+          '<td><button class="btn btn-p btn-fantasma" data-tel-desbloq="' + esc(b.id) + '">Desbloquear</button></td></tr>').join('') + '</tbody></table></div></div>' : '');
   }
   function gerarSenha() {
     const c = 'abcdefghjkmnpqrstuvwxyzABCDEFGHJKMNPQRSTUVWXYZ23456789';
@@ -731,15 +744,21 @@
         aviso(SV.STATUS[status].rotulo + '.');
       });
   }
-  function dlgCarga(c) {
+  function dlgCarga(c, faltando) {
     c = c || {};
     const ufs = SV.UFS.slice().sort();
     const sel = (nome, v) => '<select name="' + nome + '" required><option value="">UF</option>' + ufs.map((u) => '<option' + (u === v ? ' selected' : '') + '>' + u + '</option>').join('') + '</select>';
-    const data = c.dataCarregamento ? new Date(c.dataCarregamento - new Date().getTimezoneOffset() * 60000).toISOString().slice(0, 10) : '';
-    dialogo('<h2>' + (c.id ? 'Editar carga' : 'Nova carga') + '</h2>' +
-      '<label class="campo"><span>Cliente</span><input name="cliente" required value="' + esc(c.cliente || '') + '"></label>' +
-      '<div class="grade3"><label class="campo"><span>Origem</span><input name="oc" required value="' + esc(c.origemCidade || '') + '"></label><label class="campo"><span>UF</span>' + sel('ou', c.origemUF) + '</label><label class="campo"><span>Data</span><input type="date" name="data" value="' + data + '"></label></div>' +
-      '<div class="grade3"><label class="campo"><span>Destino</span><input name="dc" required value="' + esc(c.destinoCidade || '') + '"></label><label class="campo"><span>UF</span>' + sel('du', c.destinoUF) + '</label><label class="campo"><span>Peso (t)</span><input name="peso" inputmode="decimal" value="' + (c.pesoKg ? String(c.pesoKg / 1000).replace('.', ',') : '') + '"></label></div>' +
+    const dt = (ms) => ms ? new Date(ms - new Date().getTimezoneOffset() * 60000).toISOString().slice(0, 10) : '';
+    const rascunho = c.status === 'rascunho';
+    dialogo('<h2>' + (rascunho ? 'Revisar carga' : c.id ? 'Editar carga' : 'Nova carga') + '</h2>' +
+      (faltando && faltando.length ? '<div class="margem">Não entendi: <b>' + esc(faltando.join(', ')) + '</b>. Preencha se souber.</div>' : '') +
+      '<div class="grade2"><label class="campo"><span>Produto</span><input name="produto" value="' + esc(c.produto || '') + '" placeholder="Ex.: medicamentos"></label>' +
+      '<label class="campo"><span>Cliente</span><input name="cliente" value="' + esc(c.cliente || '') + '" placeholder="Opcional"></label></div>' +
+      '<div class="grade3"><label class="campo"><span>Origem</span><input name="oc" value="' + esc(c.origemCidade || '') + '" placeholder="Cidade"></label><label class="campo"><span>UF</span>' + sel('ou', c.origemUF) + '</label><label class="campo"><span>Carrega</span><input type="date" name="data" value="' + dt(c.dataCarregamento) + '"></label></div>' +
+      '<div class="grade3"><label class="campo"><span>Destino</span><input name="dc" value="' + esc(c.destinoCidade || '') + '" placeholder="Cidade"></label><label class="campo"><span>UF</span>' + sel('du', c.destinoUF) + '</label><label class="campo"><span>Descarrega</span><input type="date" name="descarga" value="' + dt(c.dataDescarga) + '"></label></div>' +
+      '<div class="grade3"><label class="campo"><span>Tipo de veículo</span><select name="tipo"><option value="">Qualquer</option>' + SV.VEICULOS.map((v) => '<option' + (v === c.tipoVeiculo ? ' selected' : '') + '>' + v + '</option>').join('') + '</select></label>' +
+      '<label class="campo"><span>Peso (t)</span><input name="peso" inputmode="decimal" value="' + (c.pesoKg ? String(c.pesoKg / 1000).replace('.', ',') : '') + '"></label>' +
+      '<label class="campo"><span>Pagamento</span><input name="pagamento" value="' + esc(c.pagamento || '') + '" placeholder="70% + 30%"></label></div>' +
       '<div class="campo"><span>Carrocerias aceitas</span>' + chipsHtml(SV.CARROCERIAS, c.carrocerias || [], true) + '<small>Nenhuma marcada = qualquer carroceria.</small></div>' +
       '<div class="grade2"><label class="campo"><span>Ano mínimo</span><input name="ano" inputmode="numeric" value="' + (c.anoMinimo || '') + '"></label>' +
       '<label class="campo"><span>Valor do frete ao motorista (R$)</span><input name="oferecido" inputmode="decimal" value="' + (c.valorOferecido || '') + '"><small>Aparece no app. Em branco = “a combinar”.</small></label></div>' +
@@ -748,19 +767,102 @@
       '<div class="grade2"><label class="interruptor" style="margin-bottom:1.1rem">Pedágio incluso no frete<input type="checkbox" name="incluso"' + (c.pedagioIncluso ? ' checked' : '') + '></label>' +
       '<label class="interruptor" style="margin-bottom:1.1rem">Mostrar no app<input type="checkbox" name="visivel"' + (c.visivelApp === false ? '' : ' checked') + '></label></div>' +
       '<label class="campo"><span>Observação para o motorista</span><input name="obsMot" value="' + esc(c.obsMotorista || '') + '" placeholder="Ex.: carga paletizada, descarga com agendamento"><small>Aparece no app do motorista.</small></label>' +
-      '<label class="campo"><span>Observações internas</span><textarea name="obs">' + esc(c.obs || '') + '</textarea><small>Só a equipe vê.</small></label>' + rodape('Salvar carga'),
+      '<label class="campo"><span>Observações internas</span><textarea name="obs">' + esc(c.obs || '') + '</textarea><small>Só a equipe vê.</small></label>' + rodape(rascunho ? 'Publicar carga' : 'Salvar carga'),
       async (f) => {
-        if (!f.cliente.value.trim() || !f.oc.value.trim() || !f.ou.value || !f.dc.value.trim() || !f.du.value) throw new Error('Preencha cliente, origem e destino com UF.');
+        if (!f.ou.value || !f.du.value) throw new Error('Escolha a UF de origem e a de destino.');
         const salva = await SV.salvarCarga(Object.assign({}, c, {
+          status: rascunho || !c.status ? 'aberta' : c.status,
+          produto: f.produto.value.trim(), tipoVeiculo: f.tipo.value, pagamento: f.pagamento.value.trim(),
           cliente: f.cliente.value.trim(), origemCidade: f.oc.value.trim(), origemUF: f.ou.value, destinoCidade: f.dc.value.trim(), destinoUF: f.du.value,
           dataCarregamento: f.data.value ? new Date(f.data.value + 'T08:00').getTime() : null,
+          dataDescarga: f.descarga.value ? new Date(f.descarga.value + 'T08:00').getTime() : null,
           pesoKg: num(f.peso.value) ? Math.round(num(f.peso.value) * 1000) : null,
           carrocerias: chipsLidos($('.chips', f)), anoMinimo: parseInt(f.ano.value, 10) || null,
           valorOferecido: num(f.oferecido.value), pedagioIncluso: f.incluso.checked, visivelApp: f.visivel.checked, obsMotorista: f.obsMot.value.trim(),
           exigeRastreador: f.rast.checked, escolta: f.escolta.checked, obs: f.obs.value.trim()
         }));
         P.selCarga = salva.id;
-        aviso('Carga salva.');
+        atualizar();
+        aviso(rascunho ? 'Carga publicada. Já aparece no app dos motoristas.' : 'Carga salva.');
+      });
+  }
+
+  /* ---------- bloquear e excluir motorista ---------- */
+  function dlgBloquear(m) {
+    dialogo('<h2>Bloquear ' + esc((m.nome || 'motorista').split(' ')[0]) + '</h2>' +
+      '<p class="sub">O motorista perde o acesso ao app na hora, sai da fila e o número ' + esc(U.telefone(m.telefone)) + ' não consegue se cadastrar de novo. Dá para desbloquear depois.</p>' +
+      '<label class="campo"><span>Motivo</span><input name="motivo" placeholder="Ex.: não compareceu ao carregamento"><small>Só a equipe vê.</small></label>' + rodape('Bloquear motorista'),
+      async (f) => { await SV.bloquearMotorista(m, P.op, f.motivo.value.trim()); aviso((m.nome || 'Motorista') + ' bloqueado.'); });
+  }
+  function dlgExcluir(m) {
+    dialogo('<h2>Excluir ' + esc(m.nome || 'motorista') + '</h2>' +
+      '<p class="sub">Apaga o cadastro, os veículos, os avisos e o histórico de atendimento deste motorista. Não dá para desfazer.</p>' +
+      '<label class="interruptor" style="margin-bottom:12px">Também bloquear o número ' + esc(U.telefone(m.telefone)) + '<input type="checkbox" name="bloq"></label>' +
+      '<label class="campo"><span>Motivo do bloqueio</span><input name="motivo" placeholder="Opcional"></label>' +
+      '<label class="interruptor" style="margin-bottom:16px">Entendo que os dados serão apagados<input type="checkbox" name="ok"></label>' + rodape('Excluir motorista'),
+      async (f) => {
+        if (!f.ok.checked) throw new Error('Confirme que entende que os dados serão apagados.');
+        await SV.excluirMotorista(m, P.op, f.bloq.checked, f.motivo.value.trim());
+        aviso((m.nome || 'Motorista') + ' excluído' + (f.bloq.checked ? ' e bloqueado.' : '.'));
+      });
+  }
+
+  /* ---------- lançar carga por áudio ou mensagem colada ---------- */
+  function dlgVoz() {
+    const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+    let rec = null, ouvindo = false, base = '', ultimo = null, parar = () => {};
+    dialogo('<h2>Lançar carga por áudio</h2>' +
+      '<p class="sub" style="margin-bottom:14px">Toque no microfone e fale a carga, ou cole aqui a mensagem do WhatsApp.</p>' +
+      '<button type="button" class="voz-mic" id="voz-mic"><span class="voz-bola">' + IC.mic + '</span><span><b id="voz-rot">' + (SR ? 'Toque para falar' : 'Use o microfone do teclado') + '</b>' +
+        '<small id="voz-dica">' + (SR ? 'Fale com calma. Toque de novo para parar.' : 'Este navegador não transcreve sozinho: toque no campo abaixo e use o microfone do teclado do celular.') + '</small></span></button>' +
+      '<label class="campo" style="margin-top:14px"><span class="sr">Texto da carga</span><textarea name="texto" rows="6" placeholder="Ex.: carga de medicamentos do Rio para Contagem, carreta baú ano 2010 pra cima, até 15 toneladas, carrega sábado, descarrega domingo, 4.500 mais pedágio, pagamento 70 e 30, rastreado e com escolta."></textarea></label>' +
+      '<div id="voz-prev" class="voz-prev"></div>' +
+      '<div class="rodape"><button type="button" class="btn" data-fechar>Voltar</button><button type="button" class="btn" id="voz-rasc">Salvar rascunho</button><button type="submit" class="btn btn-primario">Revisar e publicar</button></div>',
+      async (f) => {
+        parar();
+        if (!ultimo || !f.texto.value.trim()) throw new Error('Fale ou cole a carga primeiro.');
+        const r = ultimo;
+        setTimeout(() => dlgCarga(Object.assign({ visivelApp: true }, r.campos, { obs: 'Lançada por áudio: ' + r.texto }), r.faltando), 0);
+      },
+      (f) => {
+        const prev = $('#voz-prev'), mic = $('#voz-mic');
+        const interpretar = () => {
+          const txt = f.texto.value.trim();
+          if (!txt) { prev.innerHTML = ''; ultimo = null; return; }
+          ultimo = LeitorCarga.ler(txt);
+          const itens = LeitorCarga.resumo(ultimo.campos);
+          prev.innerHTML = (itens.length ? itens.map((x) => '<span class="voz-chip">' + esc(x) + '</span>').join('') : '<span class="miudo">Ainda não reconheci nenhum campo.</span>') +
+            (ultimo.faltando.length ? '<div class="miudo" style="width:100%;margin-top:6px">Faltou: ' + esc(ultimo.faltando.join(', ')) + '</div>' : '<div class="miudo" style="width:100%;margin-top:6px;color:var(--verde)">Tudo reconhecido.</div>');
+        };
+        f.texto.addEventListener('input', interpretar);
+        parar = () => { ouvindo = false; if (rec) { try { rec.stop(); } catch (e) { /* já parou */ } } mic.classList.remove('ouvindo'); $('#voz-rot').textContent = 'Toque para falar'; };
+        mic.addEventListener('click', () => {
+          if (!SR) { f.texto.focus(); return; }
+          if (ouvindo) return parar();
+          rec = new SR();
+          rec.lang = 'pt-BR'; rec.continuous = true; rec.interimResults = true;
+          base = f.texto.value ? f.texto.value.trim() + ' ' : '';
+          rec.onresult = (e) => {
+            let fim = '', parcial = '';
+            for (let i = 0; i < e.results.length; i++) { if (e.results[i].isFinal) fim += e.results[i][0].transcript + ' '; else parcial += e.results[i][0].transcript; }
+            f.texto.value = (base + fim + parcial).replace(/\s+/g, ' ');
+            interpretar();
+          };
+          rec.onerror = (e) => { aviso(e.error === 'not-allowed' ? 'Libere o microfone para transcrever.' : 'A transcrição parou. Toque de novo para continuar.', true); parar(); };
+          rec.onend = () => { if (ouvindo) parar(); };
+          try { rec.start(); ouvindo = true; mic.classList.add('ouvindo'); $('#voz-rot').textContent = 'Ouvindo… toque para parar'; }
+          catch (e) { aviso('Não foi possível usar o microfone.', true); }
+        });
+        $('#voz-rasc').addEventListener('click', async () => {
+          parar();
+          if (!ultimo) return aviso('Fale ou cole a carga primeiro.', true);
+          try {
+            const salva = await SV.salvarCarga(Object.assign({ visivelApp: true }, ultimo.campos, { status: 'rascunho', obs: 'Lançada por áudio: ' + ultimo.texto }));
+            P.selCarga = salva.id; $('#dlg').close(); atualizar();
+            aviso('Rascunho salvo. Revise e publique quando puder.');
+          } catch (err) { aviso(err.message, true); }
+        });
+        $('#dlg').addEventListener('close', () => parar(), { once: true });
       });
   }
 
@@ -808,6 +910,27 @@
       }
       return;
     }
+    const mb = e.target.closest('[data-mot-bloq]');
+    if (mb) { const m = P.motoristas.find((x) => x.id === mb.dataset.motBloq); if (m) dlgBloquear(m); return; }
+    const me = e.target.closest('[data-mot-excluir]');
+    if (me) { const m = P.motoristas.find((x) => x.id === me.dataset.motExcluir); if (m) dlgExcluir(m); return; }
+    const md = e.target.closest('[data-mot-desbloq]');
+    if (md) {
+      const m = P.motoristas.find((x) => x.id === md.dataset.motDesbloq);
+      if (m && confirm('Desbloquear ' + (m.nome || 'este motorista') + '?' + (m.excluidoEm ? ' Como o cadastro foi excluído, ele poderá se cadastrar de novo.' : ''))) {
+        try { await SV.desbloquearMotorista(m); aviso('Motorista desbloqueado.'); } catch (err) { aviso(err.message, true); }
+      }
+      return;
+    }
+    const td = e.target.closest('[data-tel-desbloq]');
+    if (td) {
+      const b = P.bloqueios.find((x) => x.id === td.dataset.telDesbloq);
+      if (b && confirm('Desbloquear o número ' + U.telefone(b.telefone) + '?')) {
+        const m = P.motoristas.find((x) => x.id === b.motoristaId) || { id: null, telefone: b.telefone };
+        try { await SV.desbloquearMotorista(m); aviso('Número desbloqueado.'); } catch (err) { aviso(err.message, true); }
+      }
+      return;
+    }
     const nav = e.target.closest('[data-aba]');
     if (nav) return trocarAba(nav.dataset.aba);
     const s = e.target.closest('[data-sel]');
@@ -832,6 +955,7 @@
       if (acao === 'limpar') { if (confirm('Apagar todos os dados de demonstração deste navegador?')) { SV.limparDemo(); P.sel = null; aviso('Demonstração limpa.'); } return; }
       if (acao === 'exportar') return exportar();
       if (acao === 'nova-carga') return dlgCarga();
+      if (acao === 'carga-voz') return dlgVoz();
       if (acao === 'novo-usuario') return dlgUsuario();
       if (acao === 'editar-carga') return dlgCarga(P.cargas.find((c) => c.id === P.selCarga));
       if (acao === 'cancelar-carga') {
@@ -842,6 +966,7 @@
       if (!d) return;
       if (acao === 'assumir') { await SV.assumir(d, P.op); return aviso('Atendimento é seu. Ligue ou chame no WhatsApp.'); }
       if (acao === 'transferir') { if (confirm('Transferir o atendimento de ' + d.responsavelNome + ' para você?')) { await SV.assumir(d, P.op, true); aviso('Atendimento transferido para você.'); } return; }
+      if (acao === 'bloquear-disp') return dlgBloquear({ id: d.motoristaId, nome: d.motoristaNome, telefone: d.telefone });
       if (acao === 'proposta') return dlgProposta(d);
       if (acao === 'aceitar-contra') { if (confirm('Aceitar ' + U.moeda((d.contraproposta || {}).valor) + ' pedido pelo motorista?')) { await SV.aceitarContraproposta(d, P.op); aviso('Valor aceito. Falta a aprovação documental.'); } return; }
       if (acao === 'recusou') return dlgRecusa(d);

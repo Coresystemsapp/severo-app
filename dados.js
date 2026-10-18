@@ -195,6 +195,8 @@
           return u && u.ativo !== false ? u : null;
         } catch (e) { return null; }
       },
+      async excluir(c, id) { const t = ler(c); delete t[id]; escrever(c, t); },
+      observarDoc(c, id, cb) { return this.observar(c, null, (l) => cb(l.find((x) => x.id === id) || null)); },
       async criarUsuario(dados) {
         const t = ler('usuarios');
         if (Object.values(t).some((u) => u.email === dados.email)) throw new Error('Já existe um usuário com este e-mail.');
@@ -210,7 +212,7 @@
       async sairOperador() { localStorage.removeItem(P + 'op'); },
       limparTudo() {
         Object.keys(localStorage).filter((k) => k.indexOf(P) === 0 && k !== P + 'op').forEach((k) => localStorage.removeItem(k));
-        ['motoristas', 'veiculos', 'disponibilidades', 'atendimentos', 'cargas', 'cargasPublicas', 'interesses', 'audios', 'acessos'].forEach((c) => { if (bc) bc.postMessage(c); avisar(c); });
+        ['motoristas', 'veiculos', 'disponibilidades', 'atendimentos', 'cargas', 'cargasPublicas', 'interesses', 'audios', 'acessos', 'bloqueios'].forEach((c) => { if (bc) bc.postMessage(c); avisar(c); });
       }
     };
   }
@@ -316,6 +318,10 @@
         return uid;
       },
       async redefinirSenha(email) { await auth.sendPasswordResetEmail(email); },
+      async excluir(c, id) { await col(c).doc(id).delete(); },
+      observarDoc(c, id, cb) {
+        return col(c).doc(id).onSnapshot((s) => cb(s.exists ? Object.assign({ id: s.id }, s.data()) : null), (e) => console.error('[Severo] leitura de ' + c, e));
+      },
       recentes(c, campo, n, cb) {
         return col(c).orderBy(campo, 'desc').limit(n).onSnapshot(
           (snap) => cb(snap.docs.map((d) => Object.assign({ id: d.id }, d.data()))),
@@ -345,12 +351,17 @@
       return id ? M.obter('motoristas', id) : null;
     },
     async cadastrar(dados) {
+      const tel = soDigitos(dados.telefone);
       const id = await M.motoristaId(true);
+      let bloq = null;
+      try { bloq = await M.obter('bloqueios', tel); } catch (e) { bloq = null; }
+      if (bloq) throw new Error('Este número está bloqueado. Fale com a Severo.');
       return M.gravar('motoristas', id, {
         nome: dados.nome.trim(), telefone: soDigitos(dados.telefone), criadoEm: agora(), cadastro: 'pendente'
       });
     },
     sairMotorista() { return M.sairMotorista(); },
+    observarEu(id, cb) { return M.observarDoc('motoristas', id, cb); },
     salvarVeiculo(v) {
       const id = v.id || novoId();
       return M.gravar('veiculos', id, Object.assign({}, v, { atualizadoEm: agora() }));
@@ -513,10 +524,46 @@
         carrocerias: salva.carrocerias || [], anoMinimo: salva.anoMinimo || null,
         exigeRastreador: !!salva.exigeRastreador, escolta: !!salva.escolta,
         valorOferecido: salva.valorOferecido || null, pedagioIncluso: !!salva.pedagioIncluso, obsMotorista: salva.obsMotorista || '',
+        produto: salva.produto || '', tipoVeiculo: salva.tipoVeiculo || '', dataDescarga: salva.dataDescarga || null, pagamento: salva.pagamento || '',
         status: salva.status === 'aberta' && salva.visivelApp !== false ? 'aberta' : 'indisponivel',
         atualizadoEm: agora()
       });
       return salva;
+    },
+
+    /* ----- bloqueio e exclusão de motorista ----- */
+    observarBloqueios(cb) { return M.observar('bloqueios', null, cb); },
+    async bloquearMotorista(m, op, motivo) {
+      const tel = soDigitos(m.telefone);
+      if (tel) await M.gravar('bloqueios', tel, { telefone: tel, nome: m.nome || '', motoristaId: m.id || null, motivo: motivo || '', por: op.nome, em: agora() });
+      if (m.id) await M.gravar('motoristas', m.id, { bloqueado: true, bloqueadoEm: agora(), bloqueadoPor: op.nome, motivoBloqueio: motivo || '' });
+      // tira da fila os avisos ativos
+      if (m.id) {
+        const ds = await M.listar('disponibilidades', ['motoristaId', m.id]);
+        for (const d of ds.filter((x) => ATIVOS.includes(x.status))) {
+          await M.atualizarCom('disponibilidades', d.id, (x) => ({ status: 'cancelado', atualizadoEm: agora(), historico: (x.historico || []).concat(evento('Encerrado: motorista bloqueado', op, 'sistema')) }));
+        }
+      }
+    },
+    async desbloquearMotorista(m) {
+      const tel = soDigitos(m.telefone);
+      if (tel) await M.excluir('bloqueios', tel);
+      if (m.id && !m.excluidoEm) await M.gravar('motoristas', m.id, { bloqueado: false });
+      else if (m.id) await M.excluir('motoristas', m.id);
+    },
+    /** Apaga os dados do motorista. Com bloqueio, guarda só nome e telefone para impedir novo cadastro. */
+    async excluirMotorista(m, op, bloquear, motivo) {
+      if (bloquear && !m.bloqueado) await SV.bloquearMotorista(m, op, motivo);
+      const ds = await M.listar('disponibilidades', ['motoristaId', m.id]);
+      for (const d of ds) {
+        await M.excluir('disponibilidades', d.id);
+        try { await M.excluir('atendimentos', d.id); } catch (e) { /* não existia */ }
+        try { await M.excluir('audios', d.id); } catch (e) { /* não existia */ }
+      }
+      for (const v of await M.listar('veiculos', ['motoristaId', m.id])) await M.excluir('veiculos', v.id);
+      for (const i of await M.listar('interesses', ['motoristaId', m.id])) await M.excluir('interesses', i.id);
+      if (bloquear) await M.gravar('motoristas', m.id, { nome: m.nome || '', telefone: m.telefone || '', bloqueado: true, excluidoEm: agora(), excluidoPor: op.nome });
+      else await M.excluir('motoristas', m.id);
     },
 
     /* ----- vitrine de cargas e interesses ----- */
@@ -579,6 +626,7 @@
       const v = d.veiculo || {};
       const falhas = [];
       const pontos = [];
+      if (c.tipoVeiculo && v.tipo && String(v.tipo).indexOf(c.tipoVeiculo) !== 0) falhas.push('Pede ' + c.tipoVeiculo);
       if (c.carrocerias && c.carrocerias.length && !c.carrocerias.includes(v.carroceria)) falhas.push('Carroceria ' + (v.carroceria || 'não informada'));
       const cap = d.ocupacao === 'parcial' && d.capacidadeLivreKg ? d.capacidadeLivreKg : v.capacidadeKg;
       if (c.pesoKg && cap && cap < c.pesoKg) falhas.push('Capacidade de ' + util.toneladas(cap));

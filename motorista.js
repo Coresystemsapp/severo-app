@@ -88,7 +88,7 @@
   /* ---------- desenho ---------- */
   function desenhar() {
     const t = {
-      carregando: telaCarregando, cadastro: telaCadastro, veiculo: telaVeiculo,
+      carregando: telaCarregando, bloqueado: telaBloqueado, cadastro: telaCadastro, veiculo: telaVeiculo,
       inicio: telaInicio, pedido: telaPedido, acompanhar: telaAcompanhar, veiculos: telaVeiculos, cargas: telaCargas
     }[E.tela];
     raiz.innerHTML = t();
@@ -103,6 +103,12 @@
       '</header>';
   }
 
+  function telaBloqueado() {
+    return topo() + '<section class="tela"><div class="estado-grande"><span class="etq vermelho">Acesso bloqueado</span>' +
+      '<h1 class="titulo" style="margin-top:.7rem">Seu acesso ao app foi bloqueado</h1>' +
+      '<p class="sub">Para saber o motivo ou pedir a liberação, fale com a central da Severo.</p></div>' +
+      '<div class="acoes-coluna"><a class="btn btn-primario btn-grande" href="https://wa.me/' + U.soDigitos(C.centralWhatsApp) + '" target="_blank" rel="noopener">' + IC.zap + 'Falar com a central</a></div></section>';
+  }
   function telaCarregando() {
     return topo() + '<div class="carregando">Carregando…</div>';
   }
@@ -256,10 +262,12 @@
     const data = c.dataCarregamento ? new Date(c.dataCarregamento).toLocaleDateString('pt-BR', { weekday: 'short', day: '2-digit', month: '2-digit' }) : 'a combinar';
     const zap = 'https://wa.me/' + U.soDigitos(C.centralWhatsApp) + '?text=' + encodeURIComponent('Olá! Tenho interesse na carga ' + c.origemCidade + '/' + c.origemUF + ' → ' + c.destinoCidade + '/' + c.destinoUF + ' (' + data + ').');
     return '<article class="cartao carga-m' + (x.r.ok ? '' : ' fraca') + '">' +
-      '<div class="rota-m"><span class="escudo-mini">' + esc(c.origemUF) + '</span><b>' + esc(c.origemCidade) + '</b><span class="seta">→</span>' +
-      '<span class="escudo-mini">' + esc(c.destinoUF) + '</span><b>' + esc(c.destinoCidade) + '</b></div>' +
-      '<div class="miudo" style="margin:.35rem 0 .6rem">Carrega ' + data + ' · ' + U.toneladas(c.pesoKg) + ' · ' + esc((c.carrocerias || []).join(' ou ') || 'qualquer carroceria') +
-      (c.exigeRastreador ? ' · rastreador' : '') + (c.anoMinimo ? ' · ano ' + c.anoMinimo + '+' : '') + '</div>' +
+      (c.produto ? '<div class="miudo" style="color:var(--laranja-forte);font-weight:600;margin-bottom:.3rem">Carga de ' + esc(c.produto.toLowerCase()) + '</div>' : '') +
+      '<div class="rota-m"><span class="escudo-mini">' + esc(c.origemUF) + '</span><b>' + esc(c.origemCidade || '') + '</b><span class="seta">→</span>' +
+      '<span class="escudo-mini">' + esc(c.destinoUF) + '</span><b>' + esc(c.destinoCidade || '') + '</b></div>' +
+      '<div class="miudo" style="margin:.35rem 0 .6rem">Carrega ' + data + (c.dataDescarga ? ' · descarrega ' + new Date(c.dataDescarga).toLocaleDateString('pt-BR', { weekday: 'short', day: '2-digit', month: '2-digit' }) : '') +
+      ' · ' + U.toneladas(c.pesoKg) + ' · ' + esc([c.tipoVeiculo, (c.carrocerias || []).join(' ou ')].filter(Boolean).join(' ') || 'qualquer veículo') +
+      (c.exigeRastreador ? ' · rastreado' : '') + (c.escolta ? ' · escolta' : '') + (c.anoMinimo ? ' · ano ' + c.anoMinimo + '+' : '') + (c.pagamento ? ' · pagamento ' + esc(c.pagamento) : '') + '</div>' +
       (c.valorOferecido ? '<div class="valor-m num">' + U.moeda(c.valorOferecido) + '<span> para você · ' + (c.pedagioIncluso ? 'pedágio incluso' : 'pedágio à parte') + '</span></div>' : '<div class="miudo" style="margin-bottom:.6rem">Valor a combinar</div>') +
       (c.obsMotorista ? '<p class="miudo" style="margin:.2rem 0 .6rem">' + esc(c.obsMotorista) + '</p>' : '') +
       '<div class="chips" style="gap:.4rem;margin-bottom:.8rem">' +
@@ -734,9 +742,16 @@
   function observar() {
     E.pararObs.forEach((f) => f());
     E.pararObs = [
+      SV.observarEu(E.eu.id, (m) => {
+        if (!m) { E.pararObs.forEach((f) => f()); E.pararObs = []; SV.sairMotorista().catch(() => {}); E.eu = null; E.veiculos = []; E.pedidos = []; return ir('cadastro'); }
+        E.eu = m;
+        if (m.bloqueado && E.tela !== 'bloqueado') return ir('bloqueado');
+        if (!m.bloqueado && E.tela === 'bloqueado') return ir('inicio');
+      }),
       SV.observarVeiculos(E.eu.id, (l) => {
         E.veiculos = l.sort((a, b) => (a.atualizadoEm || 0) - (b.atualizadoEm || 0));
         E.veiculosOk = true;
+        if (E.tela === 'bloqueado' || (E.eu && E.eu.bloqueado)) return;
         if (!E.veiculos.length && E.tela !== 'veiculo' && E.tela !== 'cadastro') { E.editVeiculo = {}; return ir('veiculo'); }
         if (E.tela === 'carregando') return ir('inicio');
         if (E.tela === 'inicio' || E.tela === 'veiculos') desenhar();
@@ -770,6 +785,7 @@
     if (location.protocol.indexOf('http') === 0 && 'serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});
     E.eu = await SV.eu();
     if (!E.eu) return ir('cadastro');
+    if (E.eu.bloqueado) { observar(); return ir('bloqueado'); }
     observar();
     enviarFila();
     setInterval(() => { if (E.tela === 'inicio' || E.tela === 'acompanhar') desenhar(); }, 60000);

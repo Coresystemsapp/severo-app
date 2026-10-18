@@ -420,3 +420,15 @@ dialog.dlg::backdrop { background: rgba(5,8,12,.7); backdrop-filter: blur(3px); 
 .barra i { display: block; height: 8px; border-radius: 4px; background: var(--laranja); }
 .barra b { text-align: right; }
 .ponto-on { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: var(--verde); margin-right: 8px; box-shadow: 0 0 0 3px var(--verde-tinta); }
+
+/* lançar carga por áudio */
+.voz-mic { display:flex; align-items:center; gap:16px; width:100%; padding:14px; border-radius:16px; border:1.5px solid var(--linha); background:var(--asfalto); text-align:left; color:var(--texto) }
+.voz-mic .voz-bola { width:64px; height:64px; border-radius:50%; flex:none; display:grid; place-items:center; background:var(--laranja); color:#1C0D03 }
+.voz-mic .voz-bola svg { width:28px; height:28px }
+.voz-mic b { display:block; font:700 1.3rem/1.1 var(--f-display) }
+.voz-mic small { color:var(--texto-3); font-size:.85rem }
+.voz-mic.ouvindo { border-color:var(--vermelho) }
+.voz-mic.ouvindo .voz-bola { background:var(--vermelho); color:#fff; animation:pulso 1.2s ease-in-out infinite }
+.voz-prev { display:flex; flex-wrap:wrap; gap:6px; min-height:10px; margin:-4px 0 12px }
+.voz-chip { padding:.3rem .65rem; border-radius:999px; font-size:.85rem; background:var(--azul-tinta); color:var(--azul); font-weight:600 }
+.dlg .grade3 { grid-template-columns: 1.6fr .8fr 1.1fr; }
