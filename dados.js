@@ -102,6 +102,8 @@
       if (q.tipo === 'amanha') return 'Amanhã' + (q.comHora ? ', ' + hora : '');
       return dt.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' }) + ', ' + hora;
     },
+    pedagioModo(o) { return (o && o.pedagioModo) || (o && o.pedagioIncluso ? 'incluso' : o && o.pedagioIncluso === false ? 'separado' : 'motorista'); },
+    pedagio(o) { return { incluso: 'pedágio incluso', separado: 'pedágio à parte', motorista: 'pedágio por conta do motorista' }[util.pedagioModo(o)]; },
     hojeInicio() { const d = new Date(); d.setHours(0, 0, 0, 0); return d.getTime(); }
   };
 
@@ -494,10 +496,10 @@
       const a = await SV.atendimento(d.id);
       await M.gravar('atendimentos', d.id, {
         negociacao: Object.assign({}, n, { em: agora(), por: op.nome }),
-        notas: (a.notas || []).concat(evento('Proposta: frete de ' + util.moeda(n.repasse) + (n.pedagioIncluso ? ' com pedágio incluso' : ' + pedágio à parte') + (n.cargaRotulo ? ' · ' + n.cargaRotulo : ''), op, 'proposta'))
+        notas: (a.notas || []).concat(evento('Proposta: frete de ' + util.moeda(n.repasse) + (' · ' + util.pedagio(n)) + (n.cargaRotulo ? ' · ' + n.cargaRotulo : ''), op, 'proposta'))
       });
       await M.atualizarCom('disponibilidades', d.id, (x) => ({
-        proposta: { rota: n.rota || '', valorParceiro: n.repasse, pedagioIncluso: !!n.pedagioIncluso, pedagio: n.pedagioIncluso ? null : (n.pedagio || null), pagamento: n.pagamento || '', cargaId: n.cargaId || null },
+        proposta: { rota: n.rota || '', valorParceiro: n.repasse, pedagioIncluso: util.pedagioModo(n) === 'incluso', pedagioModo: util.pedagioModo(n), pedagio: util.pedagioModo(n) === 'separado' ? (n.pedagio || null) : null, pagamento: n.pagamento || '', cargaId: n.cargaId || null },
         status: 'proposta_enviada', respostaMotorista: null, contraproposta: null, atualizadoEm: agora(),
         historico: (x.historico || []).concat(evento('Proposta enviada ao motorista', op, 'status'))
       }));
@@ -523,7 +525,7 @@
         dataCarregamento: salva.dataCarregamento || null, pesoKg: salva.pesoKg || null,
         carrocerias: salva.carrocerias || [], anoMinimo: salva.anoMinimo || null,
         exigeRastreador: !!salva.exigeRastreador, escolta: !!salva.escolta,
-        valorOferecido: salva.valorOferecido || null, pedagioIncluso: !!salva.pedagioIncluso, obsMotorista: salva.obsMotorista || '',
+        valorOferecido: salva.valorOferecido || null, pedagioIncluso: util.pedagioModo(salva) === 'incluso', pedagioModo: util.pedagioModo(salva), obsMotorista: salva.obsMotorista || '',
         produto: salva.produto || '', tipoVeiculo: salva.tipoVeiculo || '', dataDescarga: salva.dataDescarga || null, pagamento: salva.pagamento || '',
         status: salva.status === 'aberta' && salva.visivelApp !== false ? 'aberta' : 'indisponivel',
         atualizadoEm: agora()

@@ -268,7 +268,7 @@
       '<div class="miudo" style="margin:.35rem 0 .6rem">Carrega ' + data + (c.dataDescarga ? ' · descarrega ' + new Date(c.dataDescarga).toLocaleDateString('pt-BR', { weekday: 'short', day: '2-digit', month: '2-digit' }) : '') +
       ' · ' + U.toneladas(c.pesoKg) + ' · ' + esc([c.tipoVeiculo, (c.carrocerias || []).join(' ou ')].filter(Boolean).join(' ') || 'qualquer veículo') +
       (c.exigeRastreador ? ' · rastreado' : '') + (c.escolta ? ' · escolta' : '') + (c.anoMinimo ? ' · ano ' + c.anoMinimo + '+' : '') + (c.pagamento ? ' · pagamento ' + esc(c.pagamento) : '') + '</div>' +
-      (c.valorOferecido ? '<div class="valor-m num">' + U.moeda(c.valorOferecido) + '<span> para você · ' + (c.pedagioIncluso ? 'pedágio incluso' : 'pedágio à parte') + '</span></div>' : '<div class="miudo" style="margin-bottom:.6rem">Valor a combinar</div>') +
+      (c.valorOferecido ? '<div class="valor-m num">' + U.moeda(c.valorOferecido) + '<span> para você · ' + U.pedagio(c) + '</span></div>' : '<div class="miudo" style="margin-bottom:.6rem">Valor a combinar</div>') +
       (c.obsMotorista ? '<p class="miudo" style="margin:.2rem 0 .6rem">' + esc(c.obsMotorista) + '</p>' : '') +
       '<div class="chips" style="gap:.4rem;margin-bottom:.8rem">' +
       (x.r.ok ? '<span class="etq verde">Encaixa no seu veículo</span>' : '<span class="etq cinza">Não encaixa: ' + esc(x.r.falhas.join(', ')) + '</span>') +
@@ -574,7 +574,7 @@
     const propostaHtml = pr && (st === 'proposta_enviada' || st === 'contraproposta' || st === 'aguardando_aprovacao' || st === 'carga_fechada') ?
       '<div class="cartao proposta-box"><span class="miudo">Proposta da Severo</span><div class="valor num">' + U.moeda(pr.valorParceiro) + '</div>' +
       (pr.rota ? '<b>' + esc(pr.rota) + '</b><br>' : '') +
-      '<span class="miudo">' + (pr.pedagioIncluso ? 'Pedágio incluso no valor. ' : 'Pedágio pago à parte' + (pr.pedagio ? ' (' + U.moeda(pr.pedagio) + ')' : '') + '. ') + esc(pr.pagamento || '') + '</span>' +
+      '<span class="miudo">' + (U.pedagio(pr).replace(/^p/, 'P') + (pr.pedagio ? ' (' + U.moeda(pr.pedagio) + ')' : '') + '. ') + esc(pr.pagamento || '') + '</span>' +
       (st === 'contraproposta' && p.contraproposta ? '<div class="cartao" style="margin-top:1rem;background:var(--asfalto)"><span class="miudo">Você pediu</span><div class="valor-m num" style="margin:.2rem 0">' + U.moeda(p.contraproposta.valor) + '</div>' +
         (p.contraproposta.mensagem ? '<span class="miudo">“' + esc(p.contraproposta.mensagem) + '”</span>' : '') + '<p class="miudo" style="margin:.5rem 0 0">Aguardando a resposta da Severo.</p></div>' : '') +
       (st === 'proposta_enviada' && E.negociar

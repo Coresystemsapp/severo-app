@@ -367,7 +367,7 @@
     const negHtml = neg ? '<div class="det-sec"><h3>Negociação <small>' + esc(neg.por || '') + ' · ' + U.desde(neg.em) + '</small></h3>' +
       '<dl class="det-grade">' +
       '<div><dt>Frete ao motorista</dt><dd class="num">' + U.moeda(neg.repasse) + '</dd></div>' +
-      '<div><dt>Pedágio</dt><dd>' + (neg.pedagioIncluso ? 'Incluso no frete' : 'À parte' + (neg.pedagio ? ' · ' + U.moeda(neg.pedagio) : '')) + '</dd></div>' +
+      '<div><dt>Pedágio</dt><dd>' + (U.pedagio(neg).replace(/^p/, 'P') + (neg.pedagio ? ' · ' + U.moeda(neg.pedagio) : '')) + '</dd></div>' +
       '<div class="largo"><dt>Pagamento combinado</dt><dd>' + esc(neg.pagamento || '—') + '</dd></div>' +
       (neg.cargaRotulo ? '<div class="largo"><dt>Carga</dt><dd>' + esc(neg.cargaRotulo) + '</dd></div>' : '') +
       '</dl></div>' : '';
@@ -455,7 +455,7 @@
         return '<tr class="clicavel" data-carga="' + c.id + '" aria-current="' + (P.selCarga === c.id) + '">' +
           '<td><b>' + esc(c.origemUF) + ' → ' + esc(c.destinoUF) + '</b><div class="miudo">' + esc(c.origemCidade || c.origemUF) + ' → ' + esc(c.destinoCidade || c.destinoUF) + '</div></td>' +
           '<td>' + (esc(c.cliente) || '<span class="miudo">não informado</span>') + (c.produto ? '<div class="miudo">' + esc(c.produto) + '</div>' : '') + '</td><td class="num">' + U.toneladas(c.pesoKg) + '</td>' +
-          '<td class="num">' + (c.valorOferecido ? U.moeda(c.valorOferecido) + '<div class="miudo">' + (c.pedagioIncluso ? 'c/ pedágio' : 's/ pedágio') + '</div>' : '<span class="miudo">a combinar</span>') + '</td>' +
+          '<td class="num">' + (c.valorOferecido ? U.moeda(c.valorOferecido) + '<div class="miudo">' + ({ incluso: 'c/ pedágio', separado: '+ pedágio', motorista: 'pedágio motorista' }[U.pedagioModo(c)]) + '</div>' : '<span class="miudo">a combinar</span>') + '</td>' +
           '<td>' + (c.status === 'aberta' && c.dataCarregamento && c.dataCarregamento < Date.now() - 86400000 ? '<span class="etq vermelho">Data passada</span>' : '<span class="etq ' + (c.status === 'aberta' ? 'azul' : c.status === 'fechada' ? 'verde' : c.status === 'rascunho' ? 'amarelo' : 'cinza') + '">' + ({ aberta: 'Aberta', fechada: 'Fechada', cancelada: 'Cancelada', rascunho: 'Rascunho' }[c.status] || c.status) + '</span>') + '</td>' +
           (soCargas() ? '</tr>' : '<td class="num">' + (c.status === 'aberta' ? n : '—') + '</td>' +
           '<td class="num">' + (function () { const q = P.interesses.filter((i) => i.cargaId === c.id && i.status !== 'descartado'); const novos = q.filter((i) => i.status === 'novo').length; return q.length ? q.length + (novos ? ' <span class="etq laranja">' + novos + ' novo' + (novos > 1 ? 's' : '') + '</span>' : '') : '—'; })() + '</td></tr>');
@@ -499,7 +499,7 @@
       '<div><dt>Veículo</dt><dd>' + esc([c.tipoVeiculo, (c.carrocerias || []).join(', ')].filter(Boolean).join(' · ') || 'Qualquer') + '</dd></div>' +
       '<div><dt>Pagamento</dt><dd>' + esc(c.pagamento || '—') + '</dd></div>' +
       '<div><dt>Exigências</dt><dd>' + ([c.anoMinimo ? 'ano ' + c.anoMinimo + '+' : '', c.exigeRastreador ? 'rastreador' : '', c.escolta ? 'escolta' : ''].filter(Boolean).join(', ') || 'Nenhuma') + '</dd></div>' +
-      '<div><dt>Frete ao motorista</dt><dd class="num">' + (c.valorOferecido ? U.moeda(c.valorOferecido) + '<div class="miudo">' + (c.pedagioIncluso ? 'pedágio incluso' : 'pedágio à parte') + '</div>' : 'a combinar') + '</dd></div>' +
+      '<div><dt>Frete ao motorista</dt><dd class="num">' + (c.valorOferecido ? U.moeda(c.valorOferecido) + '<div class="miudo">' + U.pedagio(c) + '</div>' : 'a combinar') + '</dd></div>' +
       '<div class="largo"><dt>No app do motorista</dt><dd>' + (c.status === 'aberta' && c.visivelApp !== false ? 'Visível' : 'Oculta') + '</dd></div>' +
       (c.obsMotorista ? '<div class="largo"><dt>Observação para o motorista</dt><dd>' + esc(c.obsMotorista) + '</dd></div>' : '') +
       (c.obs && !soCargas() ? '<div class="largo"><dt>Observações internas</dt><dd>' + esc(c.obs) + '</dd></div>' : '') +
@@ -680,15 +680,16 @@
     const a = P.atend[d.id] || {}, n = a.negociacao || {};
     const abertas = P.cargas.filter((c) => c.status === 'aberta').map((c) => ({ c: c, r: SV.compatibilidade(d, c) })).sort((x, y) => (y.r.ok - x.r.ok) || (y.r.nota - x.r.nota));
     const rot = (c) => c.cliente + ' · ' + c.origemCidade + '/' + c.origemUF + ' → ' + c.destinoCidade + '/' + c.destinoUF;
-    const incluso = n.pedagioIncluso == null ? true : n.pedagioIncluso;
+    const modo = n.repasse ? U.pedagioModo(n) : 'motorista';
+    const optsPed = (m) => [['incluso', 'Incluso no frete'], ['separado', 'Pago à parte (+ pedágio)'], ['motorista', 'Por conta do motorista']].map((o) => '<option value="' + o[0] + '"' + (o[0] === m ? ' selected' : '') + '>' + o[1] + '</option>').join('');
     dialogo('<h2>Proposta para ' + esc((d.motoristaNome || '').split(' ')[0]) + '</h2>' +
       (d.contraproposta && d.status === 'contraproposta' ? '<div class="margem">O motorista pediu <b>' + U.moeda(d.contraproposta.valor) + '</b>' + (d.contraproposta.mensagem ? ': “' + esc(d.contraproposta.mensagem) + '”' : '') + '</div>' : '') +
       '<label class="campo"><span>Carga</span><select name="carga"><option value="">Carga não cadastrada</option>' +
       abertas.map((x) => '<option value="' + x.c.id + '"' + (n.cargaId === x.c.id ? ' selected' : '') + '>' + esc(rot(x.c)) + (x.r.ok ? '' : ' (não atende)') + '</option>').join('') + '</select></label>' +
       '<label class="campo"><span>Rota informada ao motorista</span><input name="rota" value="' + esc(n.rota || '') + '" placeholder="Contagem/MG → Rio de Janeiro/RJ"></label>' +
       '<div class="grade2"><label class="campo"><span>Valor do frete ao motorista (R$)</span><input name="repasse" inputmode="decimal" required value="' + (n.repasse || '') + '"></label>' +
-      '<label class="interruptor" style="margin:1.75rem 0 1.1rem">Pedágio incluso<input type="checkbox" name="incluso"' + (incluso ? ' checked' : '') + '></label></div>' +
-      '<div class="grade2"><label class="campo" id="c-pedagio"' + (incluso ? ' style="display:none"' : '') + '><span>Pedágio à parte (R$)</span><input name="pedagio" inputmode="decimal" value="' + (n.pedagio || '') + '"><small>Vale-pedágio pago separado. Opcional.</small></label>' +
+      '<label class="campo"><span>Pedágio</span><select name="pmodo">' + optsPed(modo) + '</select></label></div>' +
+      '<div class="grade2"><label class="campo" id="c-pedagio"' + (modo !== 'separado' ? ' style="display:none"' : '') + '><span>Pedágio à parte (R$)</span><input name="pedagio" inputmode="decimal" value="' + (n.pedagio || '') + '"><small>Vale-pedágio pago separado. Opcional.</small></label>' +
       '<label class="campo"><span>Pagamento combinado</span><input name="pagamento" value="' + esc(n.pagamento || '') + '" placeholder="70% no carregamento"></label></div>' +
       rodape('Enviar proposta ao motorista'),
       async (f) => {
@@ -697,18 +698,18 @@
         const carga = P.cargas.find((c) => c.id === f.carga.value);
         await SV.enviarProposta(d, P.op, {
           cargaId: carga ? carga.id : null, cargaRotulo: carga ? rot(carga) : '', rota: f.rota.value.trim(),
-          repasse: repasse, pedagioIncluso: f.incluso.checked, pedagio: f.incluso.checked ? null : num(f.pedagio.value), pagamento: f.pagamento.value.trim()
+          repasse: repasse, pedagioModo: f.pmodo.value, pedagioIncluso: f.pmodo.value === 'incluso', pedagio: f.pmodo.value === 'separado' ? num(f.pedagio.value) : null, pagamento: f.pagamento.value.trim()
         });
         aviso('Proposta enviada. O motorista recebe no app para aceitar, negociar ou recusar.');
       },
       (f) => {
-        f.incluso.addEventListener('change', () => { $('#c-pedagio').style.display = f.incluso.checked ? 'none' : ''; });
+        f.pmodo.addEventListener('change', () => { $('#c-pedagio').style.display = f.pmodo.value === 'separado' ? '' : 'none'; });
         f.carga.addEventListener('change', () => {
           const c = P.cargas.find((x) => x.id === f.carga.value);
           if (!c) return;
           f.rota.value = c.origemCidade + '/' + c.origemUF + ' → ' + c.destinoCidade + '/' + c.destinoUF;
           if (c.valorOferecido) f.repasse.value = c.valorOferecido;
-          f.incluso.checked = !!c.pedagioIncluso; $('#c-pedagio').style.display = f.incluso.checked ? 'none' : '';
+          f.pmodo.value = U.pedagioModo(c); $('#c-pedagio').style.display = f.pmodo.value === 'separado' ? '' : 'none';
         });
       });
   }
@@ -766,7 +767,7 @@
       '<label class="campo"><span>Valor do frete ao motorista (R$)</span><input name="oferecido" inputmode="decimal" value="' + (c.valorOferecido || '') + '"><small>Aparece no app. Em branco = “a combinar”.</small></label></div>' +
       '<div class="grade2"><label class="interruptor" style="margin-bottom:1.1rem">Exige rastreador<input type="checkbox" name="rast"' + (c.exigeRastreador ? ' checked' : '') + '></label>' +
       '<label class="interruptor" style="margin-bottom:1.1rem">Escolta<input type="checkbox" name="escolta"' + (c.escolta ? ' checked' : '') + '></label></div>' +
-      '<div class="grade2"><label class="interruptor" style="margin-bottom:1.1rem">Pedágio incluso no frete<input type="checkbox" name="incluso"' + (c.pedagioIncluso ? ' checked' : '') + '></label>' +
+      '<div class="grade2"><label class="campo"><span>Pedágio</span><select name="pmodo">' + [['incluso', 'Incluso no frete'], ['separado', 'Pago à parte (+ pedágio)'], ['motorista', 'Por conta do motorista']].map((o) => '<option value="' + o[0] + '"' + (o[0] === U.pedagioModo(c) ? ' selected' : '') + '>' + o[1] + '</option>').join('') + '</select></label>' +
       '<label class="interruptor" style="margin-bottom:1.1rem">Mostrar no app<input type="checkbox" name="visivel"' + (c.visivelApp === false ? '' : ' checked') + '></label></div>' +
       '<label class="campo"><span>Observação para o motorista</span><input name="obsMot" value="' + esc(c.obsMotorista || '') + '" placeholder="Ex.: carga paletizada, descarga com agendamento"><small>Aparece no app do motorista.</small></label>' +
       '<label class="campo"><span>Observações internas</span><textarea name="obs">' + esc(c.obs || '') + '</textarea><small>Só a equipe vê.</small></label>' + rodape(rascunho ? 'Publicar carga' : 'Salvar carga'),
@@ -789,7 +790,7 @@
           dataDescarga: f.descarga.value ? new Date(f.descarga.value + 'T08:00').getTime() : null,
           pesoKg: num(f.peso.value) ? Math.round(num(f.peso.value) * 1000) : null,
           carrocerias: chipsLidos($('.chips', f)), anoMinimo: parseInt(f.ano.value, 10) || null,
-          valorOferecido: num(f.oferecido.value), pedagioIncluso: f.incluso.checked, visivelApp: f.visivel.checked, obsMotorista: f.obsMot.value.trim(),
+          valorOferecido: num(f.oferecido.value), pedagioModo: f.pmodo.value, pedagioIncluso: f.pmodo.value === 'incluso', visivelApp: f.visivel.checked, obsMotorista: f.obsMot.value.trim(),
           exigeRastreador: f.rast.checked, escolta: f.escolta.checked, obs: f.obs.value.trim()
         }));
         P.selCarga = salva.id;
@@ -890,13 +891,13 @@
 
   /* ---------- exportação ---------- */
   function exportar() {
-    const cab = ['Criado em', 'Motorista', 'Telefone', 'Bairro', 'Cidade', 'UF', 'Veículo', 'Carroceria', 'Capacidade (t)', 'Placa', 'Destinos', 'Aceita outras', 'Situação', 'Responsável', '1º contato (min)', 'Frete ao motorista', 'Pedágio incluso', 'Pedágio à parte', 'Pagamento', 'Motorista pediu', 'Resposta no app', 'Motivos de recusa'];
+    const cab = ['Criado em', 'Motorista', 'Telefone', 'Bairro', 'Cidade', 'UF', 'Veículo', 'Carroceria', 'Capacidade (t)', 'Placa', 'Destinos', 'Aceita outras', 'Situação', 'Responsável', '1º contato (min)', 'Frete ao motorista', 'Pedágio', 'Valor do pedágio', 'Pagamento', 'Motorista pediu', 'Resposta no app', 'Motivos de recusa'];
     const dt = (ms) => ms ? new Date(ms).toLocaleString('pt-BR') : '';
     const linhas = P.fila.slice().sort((a, b) => a.criadoEm - b.criadoEm).map((d) => {
       const v = d.veiculo || {}, a = P.atend[d.id] || {}, n = a.negociacao || {};
       return [dt(d.criadoEm), d.motoristaNome, U.telefone(d.telefone), d.bairro || '', d.cidade, d.uf, v.tipo, v.carroceria, v.capacidadeKg ? v.capacidadeKg / 1000 : '', v.placa,
         (d.destinos || []).join(' '), d.aceitaOutras ? 'sim' : 'não', SV.STATUS[SV.statusEfetivo(d)].rotulo, d.responsavelNome || '',
-        d.assumidoEm ? Math.round((d.assumidoEm - d.criadoEm) / 60000) : '', n.repasse || '', n.repasse ? (n.pedagioIncluso ? 'sim' : 'não') : '', n.pedagio || '', n.pagamento || '',
+        d.assumidoEm ? Math.round((d.assumidoEm - d.criadoEm) / 60000) : '', n.repasse || '', n.repasse ? U.pedagio(n) : '', n.pedagio || '', n.pagamento || '',
         d.contraproposta ? d.contraproposta.valor : '', d.respostaMotorista ? (d.respostaMotorista.aceita ? 'aceitou' : 'recusou: ' + d.respostaMotorista.motivo) : '',
         (a.recusas || []).map((r) => r.motivo).concat(d.respostaMotorista && !d.respostaMotorista.aceita ? [d.respostaMotorista.motivo] : []).join(', ')];
     });

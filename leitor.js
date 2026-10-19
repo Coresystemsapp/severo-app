@@ -90,8 +90,9 @@
       return { cidade: conhecida ? conhecida[0] : titulo(nome), uf: m[2].toUpperCase() };
     }
     if (t.length === 2 && UFS.includes(t.toUpperCase())) {
-      // só a UF: o Rio e São Paulo, ditos assim, quase sempre são a capital
-      return { cidade: '', uf: t.toUpperCase() };
+      // só a UF: "RJ" e "SP", ditos assim, são a capital
+      const uf = t.toUpperCase();
+      return { cidade: uf === 'RJ' ? 'Rio de Janeiro' : uf === 'SP' ? 'São Paulo' : '', uf: uf };
     }
     if (CIDADES[t]) return { cidade: CIDADES[t][0], uf: CIDADES[t][1] };
     // "Cotia São Paulo", "Itaguaí Rio de Janeiro": cidade seguida do nome do estado
@@ -175,7 +176,12 @@
         else if (/^(?:produto|mercadoria|material|carga|tipo de carga)$/.test(k)) { r.produto = titulo(va.replace(/[—–-].*$/, '').trim()); achados.produto = true; }
         else if (/^(?:data de )?(?:carregamento|carrega|coleta|data coleta|data da coleta|retirada)$/.test(k) && ehData) { const d = data(v, hoje); if (d) { r.dataCarregamento = d; achados.carregamento = true; } }
         else if (/^(?:data de )?(?:descarga|descarregamento|descarrega|entrega|data entrega|previsao de entrega)$/.test(k) && ehData) { const d = data(v, hoje, r.dataCarregamento || geral.dataCarregamento); if (d) { r.dataDescarga = d; achados.descarga = true; } }
-        else if (/^(?:pagamento|pgto|forma de pagamento|condicao de pagamento)$/.test(k)) { r.pagamento = pagamentoBonito(va); achados.pagamento = true; }
+        else if (/^(?:pagamento|pgto|forma de pagamento|condicao de pagamento)$/.test(k)) { const pv = va.replace(/^\s*r\$\s*[\d.,]+\s*[,;.]?\s*/i, '').replace(/^(?:pagamento|pgto)\s*:?\s*/i, ''); const nv = numero(v); if (/^\s*r\$/.test(v) && nv >= 100 && !r.valorOferecido) { r.valorOferecido = nv; achados.valor = true; } if (pv) { r.pagamento = pagamentoBonito(pv); achados.pagamento = true; } }
+        else if (/^(?:frete e pagamento|valor e pagamento)$/.test(k)) {
+          const n = numero(v); if (n && n >= 100) { r.valorOferecido = n; achados.valor = true; }
+          const pv = va.replace(/^\s*r\$\s*[\d.,]+\s*[,;.]?\s*/i, '').replace(/^(?:pagamento|pgto)\s*:?\s*/i, '');
+          if (pv) { r.pagamento = pagamentoBonito(pv); achados.pagamento = true; }
+        }
         else if (/^(?:valor|frete|valor do frete|valor frete|valor ao motorista)$/.test(k)) { const n = numero(v); if (n && n >= 100) { r.valorOferecido = n; achados.valor = true; } }
         else if (/^(?:operacao|cliente|embarcador)$/.test(k)) { r.cliente = titulo(va); }
         else if (/^(?:rota|trecho)$/.test(k)) { const x = v.split(/\s+x\s+/); if (x.length === 2) { const o = local(x[0]), d = local(x[1]); if (o && d) { Object.assign(r, { origemCidade: o.cidade, origemUF: o.uf, destinoCidade: d.cidade, destinoUF: d.uf }); achados.rota = true; } } }
@@ -208,7 +214,8 @@
   function ler(texto, hoje) {
     hoje = hoje || Date.now();
     const original = String(texto || '').trim();
-    let base = tirarEmoji(original.replace(/\s*(?:[\u2192\u2794\u279C\u27A1\u21D2\u279D\u27F6]|->|=>)\s*/g, ' x ')).replace(/[*_~]/g, ' ');
+    const quebra = (x) => x.replace(/[ \t]+(?=(?:produto|rota|trecho|datas?|ve[ií]culo|frete e pagamento|valor do frete|frete|valor|pagamento|pgto|origem|destino|coleta|descarga|carregamento|opera[cç][aã]o|cliente|requisitos|tipologia[^:\n]{0,15}|peso)\s*:)/gi, '\n');
+    let base = quebra(tirarEmoji(original.replace(/\s*(?:[\u2192\u2794\u279C\u27A1\u21D2\u279D\u27F6]|->|=>)\s*/g, ' x '))).replace(/[*_~]/g, ' ');
     let t = numerosFalados(semAcento(base).toLowerCase().replace(/\s*por\s*cento/g, '%'))
       .replace(/(\d)\s+mil\b/g, '$1000')
       .replace(/\bpixi\b|\bpics\b/g, 'pix').replace(/\btoneladas?\b/g, 'toneladas')
@@ -267,10 +274,22 @@
       const v = parseFloat(x[1].replace(/\.(?=\d{3}\b)/g, '').replace(',', '.'));
       if (v >= 300) { c.valorOferecido = v; achados.valor = true; break; }
     }
-    if (/(?:com|incluso|incluindo|ja com)\s*(?:o\s*)?pedagio|pedagio[s]?\s*(?:incluso|incluido|ja incluso|ja incluido|ja esta)/.test(t)) { c.pedagioIncluso = true; achados.pedagio = true; }
-    else if (/(?:\+|mais|fora|sem)\s*(?:o\s*|os\s*)?pedagio|pedagio[s]?\s*(?:a parte|por fora|separado|pago a parte|por conta|do motorista|nao incluso|fica por fora)|vale[- ]pedagio/.test(t)) { c.pedagioIncluso = false; achados.pedagio = true; }
+    if (/pedagio[s]?\s*(?:por conta do motorista|e do motorista|pelo motorista|do motorista|motorista paga)|motorista paga\s*(?:o\s*)?pedagio/.test(t)) { c.pedagioModo = 'motorista'; achados.pedagio = true; }
+    else if (/(?:com|incluso|incluindo|ja com)\s*(?:o\s*)?pedagio|pedagio[s]?\s*(?:incluso|incluido|ja incluso|ja incluido|ja esta)/.test(t)) { c.pedagioModo = 'incluso'; achados.pedagio = true; }
+    else if (/(?:\+|mais|fora)\s*(?:o\s*|os\s*)?pedagio|pedagio[s]?\s*(?:a parte|por fora|separado|pago a parte|nao incluso|fica por fora)|vale[- ]pedagio/.test(t)) { c.pedagioModo = 'separado'; achados.pedagio = true; }
+    else c.pedagioModo = 'motorista';
+    c.pedagioIncluso = c.pedagioModo === 'incluso';
 
-    m = t.match(/(\d{1,3}\s*%\s*(?:\+|e|mais)\s*\d{1,3}\s*%)/) || t.match(/(?:pagamento|pgto)\s*:?\s*([^\n]{2,60})/);
+    m = t.match(/(\d{1,3}\s*%\s*(?:\+|e|mais)\s*\d{1,3}\s*%)/);
+    if (!m) {
+      const rp = /(?:pagamento|pgto)\s*:?\s*([^\n]{2,60})/g;
+      let x;
+      while ((x = rp.exec(t))) {
+        const v = x[1].replace(/^\s*r\$\s*[\d.,]+\s*[,;.]?\s*/, '').trim();
+        if (v.length >= 2 && !/^(?:pagamento|pgto)\b/.test(v)) { m = [x[0], v]; break; }
+        if (/^(?:pagamento|pgto)\b/.test(v)) rp.lastIndex = x.index + x[0].indexOf(v);
+      }
+    }
     if (m) {
       c.pagamento = m[1].split(/\s(?:veiculo|rastread|escolt|valor|frete|ano\s|carreta|truck|toco|r\$|mais pedagio|pedagio|com pedagio|saindo|origem)/)[0].replace(/\s*(?:\+|\be\b|mais)\s*/g, ' + ').replace(/\s+/g, ' ').trim().replace(/[.;]$/, '');
       achados.pagamento = true;
@@ -296,7 +315,7 @@
     if (/escolt/.test(t)) { c.escolta = true; achados.escolta = true; }
 
     Object.assign(c, linhas(t, acentuado, hoje, achados, c));
-    const rotulos = { rota: 'origem e destino', tipoVeiculo: 'tipo de veículo', carrocerias: 'carroceria', peso: 'peso', valor: 'valor do frete', pedagio: 'pedágio incluso ou não', carregamento: 'data de carregamento', pagamento: 'pagamento' };
+    const rotulos = { rota: 'origem e destino', tipoVeiculo: 'tipo de veículo', carrocerias: 'carroceria', peso: 'peso', valor: 'valor do frete', carregamento: 'data de carregamento', pagamento: 'pagamento' };
     const faltando = Object.keys(rotulos).filter((k) => !achados[k]).map((k) => rotulos[k]);
     if (achados.rota && (!c.origemUF || !c.destinoUF)) faltando.unshift('UF da ' + (!c.origemUF ? 'origem' : 'do destino'));
     return { campos: c, achados: achados, faltando: faltando, texto: original };
@@ -312,7 +331,7 @@
     if (c.pesoKg) p.push((c.pesoKg / 1000).toLocaleString('pt-BR') + ' t');
     if (c.dataCarregamento) p.push('carrega ' + NOMES_DIA[new Date(c.dataCarregamento).getDay()] + ' ' + new Date(c.dataCarregamento).toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' }));
     if (c.dataDescarga) p.push('descarrega ' + NOMES_DIA[new Date(c.dataDescarga).getDay()] + ' ' + new Date(c.dataDescarga).toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' }));
-    if (c.valorOferecido) p.push('R$ ' + c.valorOferecido.toLocaleString('pt-BR') + (c.pedagioIncluso === false ? ' + pedágios' : c.pedagioIncluso ? ' com pedágio' : ''));
+    if (c.valorOferecido) p.push('R$ ' + c.valorOferecido.toLocaleString('pt-BR') + ({ incluso: ' com pedágio', separado: ' + pedágios', motorista: ' · pedágio por conta do motorista' }[c.pedagioModo] || ''));
     if (c.pagamento) p.push('pagamento ' + c.pagamento);
     if (c.exigeRastreador) p.push('rastreado');
     if (c.escolta) p.push('escolta');
