@@ -29,7 +29,7 @@ window.SEVERO_CONFIG = {
   metaPrimeiroContatoMin: 15,
 
   // Central de atendimento
-  centralWhatsApp: "5521999999999",
-  centralTelefone: "5521999999999",
+  centralWhatsApp: "5521979890475",
+  centralTelefone: "5521979890475",
   centralHorario: "Seg a sex, das 7h às 19h"
 };
