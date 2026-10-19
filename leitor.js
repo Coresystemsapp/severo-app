@@ -70,6 +70,11 @@
       const r = local1(t0.slice(x.index + x[0].length));
       if (r && r.uf) return r;
     }
+    const ws = t0.split(' ');
+    for (let n = Math.min(ws.length - 1, 4); n >= 1; n--) {
+      const r = local1(ws.slice(0, n).join(' '));
+      if (r && r.uf) return Object.assign(r, { sobra: ws.slice(n).join(' ') });
+    }
     return r0;
   }
   function local1(trecho) {
@@ -145,6 +150,56 @@
     return null;
   }
 
+  /* ---------- mensagem em linhas ("Frete: R$ 2.300", "RJ X OSASCO", "DESCARGA: 20/10/2026") ---------- */
+  const TEM_DATA = /\d{1,2}\/\d{1,2}|\bhoje\b|amanha|segunda|terca|quarta|quinta|sexta|sabado|domingo|\bdia \d/;
+  function numero(v) {
+    const x = String(v).match(/(\d[\d.]*(?:,\d{1,2})?)/);
+    return x ? parseFloat(x[1].replace(/\.(?=\d{3}\b)/g, '').replace(',', '.')) : null;
+  }
+  function pagamentoBonito(v) {
+    return v.replace(/\b(\d{1,3})\s*\/\s*(\d{1,3})\s*%?/, '$1% + $2%').replace(/\s*(?:\+|\be\b|mais)\s*/g, ' + ').replace(/\bpgto\b/gi, '').replace(/\s+/g, ' ').replace(/^[\s:+-]+|[\s.;+-]+$/g, '');
+  }
+  function linhas(t, acentuado, hoje, achados, geral) {
+    const r = {};
+    const lt = t.split('\n'), la = acentuado.split('\n');
+    lt.forEach((linha, i) => {
+      const l = linha.trim(), a = (la[i] || '').trim();
+      if (!l) return;
+      const rot = l.match(/^([a-z][a-z +\/]{1,40}?)\s*:\s*(.+)$/);
+      if (rot) {
+        const k = rot[1].trim(), v = rot[2].trim();
+        const va = a.slice(a.indexOf(':') + 1).trim();
+        const ehData = TEM_DATA.test(v);
+        if (/^(?:origem|saida|local de coleta|coleta)$/.test(k) && !ehData) { const o = local(v); if (o) { r.origemCidade = o.cidade; r.origemUF = o.uf; achados.rota = true; } }
+        else if (/^(?:destino|local de entrega|entrega|descarga)$/.test(k) && !ehData) { const d = local(v); if (d) { r.destinoCidade = d.cidade; r.destinoUF = d.uf; } }
+        else if (/^(?:produto|mercadoria|material|carga|tipo de carga)$/.test(k)) { r.produto = titulo(va.replace(/[—–-].*$/, '').trim()); achados.produto = true; }
+        else if (/^(?:data de )?(?:carregamento|carrega|coleta|data coleta|data da coleta|retirada)$/.test(k) && ehData) { const d = data(v, hoje); if (d) { r.dataCarregamento = d; achados.carregamento = true; } }
+        else if (/^(?:data de )?(?:descarga|descarregamento|descarrega|entrega|data entrega|previsao de entrega)$/.test(k) && ehData) { const d = data(v, hoje, r.dataCarregamento || geral.dataCarregamento); if (d) { r.dataDescarga = d; achados.descarga = true; } }
+        else if (/^(?:pagamento|pgto|forma de pagamento|condicao de pagamento)$/.test(k)) { r.pagamento = pagamentoBonito(va); achados.pagamento = true; }
+        else if (/^(?:valor|frete|valor do frete|valor frete|valor ao motorista)$/.test(k)) { const n = numero(v); if (n && n >= 100) { r.valorOferecido = n; achados.valor = true; } }
+        else if (/^(?:operacao|cliente|embarcador)$/.test(k)) { r.cliente = titulo(va); }
+        else if (/^(?:rota|trecho)$/.test(k)) { const x = v.split(/\s+x\s+/); if (x.length === 2) { const o = local(x[0]), d = local(x[1]); if (o && d) { Object.assign(r, { origemCidade: o.cidade, origemUF: o.uf, destinoCidade: d.cidade, destinoUF: d.uf }); achados.rota = true; } } }
+        return;
+      }
+      const rr = l.split(/[,;]/)[0].trim().match(/^(.{2,40}?)\s+x\s+(.{2,80})$/);
+      if (rr && rr[1].split(' ').length <= 5) {
+        const o = local(rr[1]), d = local(rr[2]);
+        if (o && d && (o.uf || o.cidade) && (d.uf || d.cidade)) {
+          Object.assign(r, { origemCidade: o.cidade, origemUF: o.uf, destinoCidade: d.cidade, destinoUF: d.uf });
+          achados.rota = true;
+          if (d.sobra && !geral.produto) {
+            const p = d.sobra.replace(/\b(?:media|med|aprox\w*|cerca de|de|ate|\d).*$/, '').trim();
+            if (p.length >= 3) { r.produto = titulo(p); achados.produto = true; }
+          }
+          return;
+        }
+      }
+      const pr = a.match(/^([a-zà-ú][a-zà-ú ]{2,30}?)\s*[—–-]\s*.*\d+\s*(?:t\b|ton)/);
+      if (pr && !r.produto && !/carreta|truck|toco|bau|baú|sider/.test(pr[1])) { r.produto = titulo(pr[1].trim()); achados.produto = true; }
+    });
+    return r;
+  }
+
   /**
    * ler(texto, hoje?) → { campos, achados, faltando, texto }
    * campos: produto, origemCidade, origemUF, destinoCidade, destinoUF, tipoVeiculo, carrocerias, anoMinimo,
@@ -153,7 +208,7 @@
   function ler(texto, hoje) {
     hoje = hoje || Date.now();
     const original = String(texto || '').trim();
-    let base = tirarEmoji(original).replace(/[*_~]/g, ' ');
+    let base = tirarEmoji(original.replace(/\s*(?:[\u2192\u2794\u279C\u27A1\u21D2\u279D\u27F6]|->|=>)\s*/g, ' x ')).replace(/[*_~]/g, ' ');
     let t = numerosFalados(semAcento(base).toLowerCase().replace(/\s*por\s*cento/g, '%'))
       .replace(/(\d)\s+mil\b/g, '$1000')
       .replace(/\bpixi\b|\bpics\b/g, 'pix').replace(/\btoneladas?\b/g, 'toneladas')
@@ -197,7 +252,7 @@
     for (const [k, v] of CARROCERIAS) if (new RegExp('\\b' + k).test(t) && !carrs.includes(v)) carrs.push(v);
     if (carrs.length) { c.carrocerias = carrs; achados.carrocerias = true; }
 
-    m = t.match(/\bano\s*(?:minimo\s*)?(?:de\s*)?(\d{4})/) || t.match(/\b((?:19|20)\d{2})\s*(?:ou|pra|para|em)\s*(?:superior|cima|mais|diante)/);
+    m = t.match(/\bano\s*(?:minimo\s*)?(?:de\s*)?(\d{4})/) || t.match(/\b((?:19|20)\d{2})\s*(?:(?:ou|pra|para|em)\s*(?:superior|cima|mais|diante)|acima|\+|em diante|pra frente)/);
     if (m) { c.anoMinimo = +m[1]; achados.anoMinimo = true; }
 
     m = t.match(/(\d+(?:[.,]\d+)?)\s*(?:t\b|ton\b|tons\b|tonelada)/);
@@ -215,7 +270,7 @@
     if (/(?:com|incluso|incluindo|ja com)\s*(?:o\s*)?pedagio|pedagio[s]?\s*(?:incluso|incluido|ja incluso|ja incluido|ja esta)/.test(t)) { c.pedagioIncluso = true; achados.pedagio = true; }
     else if (/(?:\+|mais|fora|sem)\s*(?:o\s*|os\s*)?pedagio|pedagio[s]?\s*(?:a parte|por fora|separado|pago a parte|por conta|do motorista|nao incluso|fica por fora)|vale[- ]pedagio/.test(t)) { c.pedagioIncluso = false; achados.pedagio = true; }
 
-    m = t.match(/(\d{1,3}\s*%\s*(?:\+|e|mais)\s*\d{1,3}\s*%)/) || t.match(/pagamento\s*:?\s*([^\n]{2,60})/);
+    m = t.match(/(\d{1,3}\s*%\s*(?:\+|e|mais)\s*\d{1,3}\s*%)/) || t.match(/(?:pagamento|pgto)\s*:?\s*([^\n]{2,60})/);
     if (m) {
       c.pagamento = m[1].split(/\s(?:veiculo|rastread|escolt|valor|frete|ano\s|carreta|truck|toco|r\$|mais pedagio|pedagio|com pedagio|saindo|origem)/)[0].replace(/\s*(?:\+|\be\b|mais)\s*/g, ' + ').replace(/\s+/g, ' ').trim().replace(/[.;]$/, '');
       achados.pagamento = true;
@@ -240,6 +295,7 @@
     if (/rastread|rastreador|rastreio|rastreamento/.test(t)) { c.exigeRastreador = true; achados.rastreador = true; }
     if (/escolt/.test(t)) { c.escolta = true; achados.escolta = true; }
 
+    Object.assign(c, linhas(t, acentuado, hoje, achados, c));
     const rotulos = { rota: 'origem e destino', tipoVeiculo: 'tipo de veículo', carrocerias: 'carroceria', peso: 'peso', valor: 'valor do frete', pedagio: 'pedágio incluso ou não', carregamento: 'data de carregamento', pagamento: 'pagamento' };
     const faltando = Object.keys(rotulos).filter((k) => !achados[k]).map((k) => rotulos[k]);
     if (achados.rota && (!c.origemUF || !c.destinoUF)) faltando.unshift('UF da ' + (!c.origemUF ? 'origem' : 'do destino'));

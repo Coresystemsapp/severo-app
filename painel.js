@@ -201,7 +201,7 @@
     } else {
       corpo.innerHTML = '<section class="pn-coluna">' +
         '<div class="pn-filtros">' + (soCargas() ? '<span class="miudo">Cargas disponíveis na Severo. Acesso somente para consulta.</span>'
-          : '<button class="btn btn-p btn-primario" data-acao="carga-voz">' + IC.mic + 'Lançar por áudio</button><button class="btn btn-p" data-acao="nova-carga">' + IC.mais + 'Nova carga</button><span class="miudo">Fale ou cole a mensagem do WhatsApp.</span>') + '</div>' +
+          : '<button class="btn btn-p btn-primario" data-acao="carga-colar">Colar mensagem</button><button class="btn btn-p" data-acao="carga-voz">' + IC.mic + 'Lançar por áudio</button><button class="btn btn-p" data-acao="nova-carga">' + IC.mais + 'Nova carga</button>') + '</div>' +
         '<div class="pn-lista" id="lista-cargas"></div></section>' +
         '<section class="pn-detalhe" id="det-carga"></section>';
     }
@@ -752,7 +752,7 @@
     const dt = (ms) => ms ? new Date(ms - new Date().getTimezoneOffset() * 60000).toISOString().slice(0, 10) : '';
     const rascunho = c.status === 'rascunho';
     dialogo('<h2>' + (rascunho ? 'Revisar carga' : c.id ? 'Editar carga' : 'Nova carga') + '</h2>' +
-      (!c.id && c.obs && c.obs.indexOf('Lançada por áudio: ') === 0 ? '<div class="margem" style="margin-bottom:8px">Você disse: <i>“' + esc(c.obs.slice(19)) + '”</i></div>' : '') +
+      (!c.id && c.obs && c.obs.indexOf('Lançada por áudio: ') === 0 ? '<div class="margem" style="margin-bottom:8px">Texto lido: <i>“' + esc(c.obs.slice(19)) + '”</i></div>' : '') +
       (!faltando ? '' : faltando.length ? '<div class="margem">Faltou: <b>' + esc(faltando.join(', ')) + '</b>. Preencha se souber.</div>' : '<div class="margem" style="color:var(--verde)">Entendi tudo. Confira e publique.</div>') +
       '<div class="grade2"><label class="campo"><span>Produto</span><input name="produto" value="' + esc(c.produto || '') + '" placeholder="Ex.: medicamentos"></label>' +
       '<label class="campo"><span>Cliente</span><input name="cliente" value="' + esc(c.cliente || '') + '" placeholder="Opcional"></label></div>' +
@@ -819,13 +819,14 @@
   }
 
   /* ---------- lançar carga por áudio ou mensagem colada ---------- */
-  function dlgVoz() {
+  function dlgVoz(colar) {
     const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
     let rec = null, ouvindo = false, base = '', ultimo = null, parar = () => {};
-    dialogo('<h2>Lançar carga por áudio</h2>' +
-      '<p class="sub" style="margin-bottom:14px">Toque no microfone e fale a carga, ou cole aqui a mensagem do WhatsApp.</p>' +
-      '<button type="button" class="voz-mic" id="voz-mic"><span class="voz-bola">' + IC.mic + '</span><span><b id="voz-rot">' + (SR ? 'Toque para falar' : 'Use o microfone do teclado') + '</b>' +
-        '<small id="voz-dica">' + (SR ? 'Fale com calma. Toque de novo para parar.' : 'Este navegador não transcreve sozinho: toque no campo abaixo e use o microfone do teclado do celular.') + '</small></span></button>' +
+    dialogo('<h2>' + (colar ? 'Colar mensagem da carga' : 'Lançar carga por áudio') + '</h2>' +
+      '<p class="sub" style="margin-bottom:14px">' + (colar ? 'Cole a mensagem do WhatsApp (Ctrl+V). Os campos são preenchidos sozinhos.' : 'Toque no microfone e fale a carga, ou cole aqui a mensagem do WhatsApp.') + '</p>' +
+      (colar ? '<button type="button" class="btn btn-primario" id="voz-colar" style="width:100%;margin-bottom:12px">Colar da área de transferência</button>' : '') +
+      (colar ? '' : '<button type="button" class="voz-mic" id="voz-mic"><span class="voz-bola">' + IC.mic + '</span><span><b id="voz-rot">' + (SR ? 'Toque para falar' : 'Use o microfone do teclado') + '</b>' +
+        '<small id="voz-dica">' + (SR ? 'Fale com calma. Toque de novo para parar.' : 'Este navegador não transcreve sozinho: toque no campo abaixo e use o microfone do teclado do celular.') + '</small></span></button>') +
       '<label class="campo" style="margin-top:14px"><span class="sr">Texto da carga</span><textarea name="texto" rows="6" placeholder="Ex.: carga de medicamentos do Rio para Contagem, carreta baú ano 2010 pra cima, até 15 toneladas, carrega sábado, descarrega domingo, 4.500 mais pedágio, pagamento 70 e 30, rastreado e com escolta."></textarea></label>' +
       '<div id="voz-prev" class="voz-prev"></div>' +
       '<div class="rodape"><button type="button" class="btn" data-fechar>Voltar</button><button type="button" class="btn" id="voz-rasc">Salvar rascunho</button><button type="submit" class="btn btn-primario">Revisar e publicar</button></div>',
@@ -836,7 +837,7 @@
         setTimeout(() => dlgCarga(Object.assign({ visivelApp: true }, r.campos, { obs: 'Lançada por áudio: ' + r.texto }), r.faltando), 0);
       },
       (f) => {
-        const prev = $('#voz-prev'), mic = $('#voz-mic');
+        const prev = $('#voz-prev'), mic = $('#voz-mic') || document.createElement('button');
         const interpretar = () => {
           const txt = f.texto.value.trim();
           if (!txt) { prev.innerHTML = ''; ultimo = null; return; }
@@ -846,7 +847,16 @@
             (ultimo.faltando.length ? '<div class="miudo" style="width:100%;margin-top:6px">Faltou: ' + esc(ultimo.faltando.join(', ')) + '</div>' : '<div class="miudo" style="width:100%;margin-top:6px;color:var(--verde)">Tudo reconhecido.</div>');
         };
         f.texto.addEventListener('input', interpretar);
-        parar = () => { ouvindo = false; if (rec) { try { rec.stop(); } catch (e) { /* já parou */ } } mic.classList.remove('ouvindo'); $('#voz-rot').textContent = 'Toque para falar'; };
+        const bc = $('#voz-colar');
+        const colarAgora = async () => {
+          try {
+            const txt = await navigator.clipboard.readText();
+            if (txt && txt.trim()) { f.texto.value = txt.trim(); interpretar(); }
+            else aviso('A área de transferência está vazia. Copie a mensagem no WhatsApp primeiro.', true);
+          } catch (e) { f.texto.focus(); aviso('Clique no campo e aperte Ctrl+V para colar.'); }
+        };
+        if (bc) { bc.addEventListener('click', colarAgora); setTimeout(() => f.texto.focus(), 50); }
+        parar = () => { ouvindo = false; if (rec) { try { rec.stop(); } catch (e) { /* já parou */ } } mic.classList.remove('ouvindo'); const vr = $('#voz-rot'); if (vr) vr.textContent = 'Toque para falar'; };
         mic.addEventListener('click', () => {
           if (!SR) { f.texto.focus(); return; }
           if (ouvindo) return parar();
@@ -866,6 +876,7 @@
         });
         $('#voz-rasc').addEventListener('click', async () => {
           parar();
+          if (!ultimo && f.texto.value.trim()) interpretar();
           if (!ultimo) return aviso('Fale ou cole a carga primeiro.', true);
           try {
             const salva = await SV.salvarCarga(Object.assign({ visivelApp: true }, ultimo.campos, { status: 'rascunho', obs: 'Lançada por áudio: ' + ultimo.texto }));
@@ -966,7 +977,8 @@
       if (acao === 'limpar') { if (confirm('Apagar todos os dados de demonstração deste navegador?')) { SV.limparDemo(); P.sel = null; aviso('Demonstração limpa.'); } return; }
       if (acao === 'exportar') return exportar();
       if (acao === 'nova-carga') return dlgCarga();
-      if (acao === 'carga-voz') return dlgVoz();
+      if (acao === 'carga-voz') return dlgVoz(false);
+      if (acao === 'carga-colar') return dlgVoz(true);
       if (acao === 'novo-usuario') return dlgUsuario();
       if (acao === 'editar-carga') return dlgCarga(P.cargas.find((c) => c.id === P.selCarga));
       if (acao === 'cancelar-carga') {
