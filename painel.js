@@ -752,7 +752,8 @@
     const dt = (ms) => ms ? new Date(ms - new Date().getTimezoneOffset() * 60000).toISOString().slice(0, 10) : '';
     const rascunho = c.status === 'rascunho';
     dialogo('<h2>' + (rascunho ? 'Revisar carga' : c.id ? 'Editar carga' : 'Nova carga') + '</h2>' +
-      (faltando && faltando.length ? '<div class="margem">Não entendi: <b>' + esc(faltando.join(', ')) + '</b>. Preencha se souber.</div>' : '') +
+      (!c.id && c.obs && c.obs.indexOf('Lançada por áudio: ') === 0 ? '<div class="margem" style="margin-bottom:8px">Você disse: <i>“' + esc(c.obs.slice(19)) + '”</i></div>' : '') +
+      (!faltando ? '' : faltando.length ? '<div class="margem">Faltou: <b>' + esc(faltando.join(', ')) + '</b>. Preencha se souber.</div>' : '<div class="margem" style="color:var(--verde)">Entendi tudo. Confira e publique.</div>') +
       '<div class="grade2"><label class="campo"><span>Produto</span><input name="produto" value="' + esc(c.produto || '') + '" placeholder="Ex.: medicamentos"></label>' +
       '<label class="campo"><span>Cliente</span><input name="cliente" value="' + esc(c.cliente || '') + '" placeholder="Opcional"></label></div>' +
       '<div class="grade3"><label class="campo"><span>Origem</span><input name="oc" value="' + esc(c.origemCidade || '') + '" placeholder="Cidade"></label><label class="campo"><span>UF</span>' + sel('ou', c.origemUF) + '</label><label class="campo"><span>Carrega</span><input type="date" name="data" value="' + dt(c.dataCarregamento) + '"></label></div>' +

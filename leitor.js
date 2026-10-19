@@ -19,7 +19,7 @@
     'macae': ['Macaé', 'RJ'], 'itaguai': ['Itaguaí', 'RJ'], 'petropolis': ['Petrópolis', 'RJ'], 'queimados': ['Queimados', 'RJ'], 'belford roxo': ['Belford Roxo', 'RJ'],
     'sao paulo': ['São Paulo', 'SP'], 'sampa': ['São Paulo', 'SP'], 'guarulhos': ['Guarulhos', 'SP'], 'campinas': ['Campinas', 'SP'], 'santos': ['Santos', 'SP'], 'osasco': ['Osasco', 'SP'],
     'barueri': ['Barueri', 'SP'], 'jundiai': ['Jundiaí', 'SP'], 'sorocaba': ['Sorocaba', 'SP'], 'ribeirao preto': ['Ribeirão Preto', 'SP'], 'sao jose dos campos': ['São José dos Campos', 'SP'],
-    'cajamar': ['Cajamar', 'SP'], 'louveira': ['Louveira', 'SP'], 'embu': ['Embu das Artes', 'SP'],
+    'cajamar': ['Cajamar', 'SP'], 'cotia': ['Cotia', 'SP'], 'itapevi': ['Itapevi', 'SP'], 'santana de parnaiba': ['Santana de Parnaíba', 'SP'], 'mogi das cruzes': ['Mogi das Cruzes', 'SP'], 'paulinia': ['Paulínia', 'SP'], 'hortolandia': ['Hortolândia', 'SP'], 'sumare': ['Sumaré', 'SP'], 'atibaia': ['Atibaia', 'SP'], 'paulista': ['Paulista', 'PE'], 'cabo de santo agostinho': ['Cabo de Santo Agostinho', 'PE'], 'jaboatao': ['Jaboatão dos Guararapes', 'PE'], 'jaboatao dos guararapes': ['Jaboatão dos Guararapes', 'PE'], 'cajamar sp': ['Cajamar', 'SP'], 'louveira': ['Louveira', 'SP'], 'embu': ['Embu das Artes', 'SP'],
     'belo horizonte': ['Belo Horizonte', 'MG'], 'bh': ['Belo Horizonte', 'MG'], 'contagem': ['Contagem', 'MG'], 'betim': ['Betim', 'MG'], 'juiz de fora': ['Juiz de Fora', 'MG'],
     'uberlandia': ['Uberlândia', 'MG'], 'uberaba': ['Uberaba', 'MG'], 'extrema': ['Extrema', 'MG'], 'pouso alegre': ['Pouso Alegre', 'MG'], 'sete lagoas': ['Sete Lagoas', 'MG'], 'ipatinga': ['Ipatinga', 'MG'],
     'vitoria': ['Vitória', 'ES'], 'serra': ['Serra', 'ES'], 'vila velha': ['Vila Velha', 'ES'], 'cariacica': ['Cariacica', 'ES'], 'linhares': ['Linhares', 'ES'],
@@ -43,7 +43,7 @@
   const CEM = { cem: 100, cento: 100, duzentos: 200, duzentas: 200, trezentos: 300, quatrocentos: 400, quinhentos: 500, seiscentos: 600, setecentos: 700, oitocentos: 800, novecentos: 900 };
   function numerosFalados(txt) {
     const palavra = Object.keys(UNID).concat(Object.keys(DEZ), Object.keys(CEM), ['mil']).join('|');
-    const re = new RegExp('\\b(?:' + palavra + '|\\d+)(?:\\s+(?:e\\s+)?(?:' + palavra + '))*\\b', 'g');
+    const re = new RegExp('\\b(?:' + palavra + '|\\d+)(?:\\s+(?:e\\s+)?(?:' + palavra + '|\\d+))*\\b', 'g');
     return txt.replace(re, (trecho) => {
       const ps = trecho.split(/\s+/).filter((p) => p !== 'e');
       if (ps.length === 1 && /^\d+$/.test(ps[0])) return trecho;
@@ -61,6 +61,18 @@
   }
 
   function local(trecho) {
+    const r0 = local1(trecho);
+    if (!r0 || r0.uf) return r0;
+    const t0 = semAcento(trecho).toLowerCase().replace(/[^\w\/\- ]/g, ' ').replace(/\s+/g, ' ').trim();
+    const re = /\s(?:de|do|da|dos|das|em)\s/g;
+    let x;
+    while ((x = re.exec(t0))) {
+      const r = local1(t0.slice(x.index + x[0].length));
+      if (r && r.uf) return r;
+    }
+    return r0;
+  }
+  function local1(trecho) {
     let t = semAcento(trecho).toLowerCase().replace(/[^\w\/\- ]/g, ' ').replace(/\s+/g, ' ').trim();
     let antes;
     do { antes = t; t = t.replace(/^(?:carga\s+(?:de|do|da)\s+[a-z]+|saindo|origem|destino|de|do|da|dos|das|para|pra|ate|em|com destino a)\s+/, '').trim(); } while (t !== antes);
@@ -77,6 +89,15 @@
       return { cidade: '', uf: t.toUpperCase() };
     }
     if (CIDADES[t]) return { cidade: CIDADES[t][0], uf: CIDADES[t][1] };
+    // "Cotia São Paulo", "Itaguaí Rio de Janeiro": cidade seguida do nome do estado
+    for (const [nome, uf] of [['sao paulo', 'SP'], ['rio de janeiro', 'RJ'], ['rio', 'RJ']]) {
+      if (t.length > nome.length + 1 && t.endsWith(' ' + nome)) {
+        const pre = t.slice(0, -nome.length - 1).trim();
+        if (/\b(?:de|do|da|em|no|na|para|pra)$/.test(pre)) return { cidade: CIDADES[nome][0], uf: uf };
+        const cid = pre;
+        if (cid) return { cidade: CIDADES[cid] ? CIDADES[cid][0] : titulo(cid), uf: uf };
+      }
+    }
     for (const nome of Object.keys(UF_NOMES).sort((a, b) => b.length - a.length)) {
       const i = t.lastIndexOf(nome);
       if (i >= 0 && i + nome.length === t.length) {
@@ -135,27 +156,36 @@
     let base = tirarEmoji(original).replace(/[*_~]/g, ' ');
     let t = numerosFalados(semAcento(base).toLowerCase().replace(/\s*por\s*cento/g, '%'))
       .replace(/(\d)\s+mil\b/g, '$1000')
+      .replace(/\bpixi\b|\bpics\b/g, 'pix').replace(/\btoneladas?\b/g, 'toneladas')
       .replace(/[ \t]+/g, ' ');
     const c = {};
     const achados = {};
 
-    // produto: "carga de medicamentos"
+    // produto: "carga de medicamentos", "produto: bebidas"
     const acentuado = base.toLowerCase().replace(/[ \t]+/g, ' ');
-    let m = acentuado.match(/\bcarga\s+(?:de|do|da|com)\s+([a-zà-ú ]{3,40}?)(?=\s*(?:\n|[,.;!]|$|\s(?:saindo|origem|de|do|da|para|pra|rj|sp|mg|com|no|na|carreta|truck|toco)\b))/);
+    const PARA_PRODUTO = /^(?:\d|uma?\b|toneladas?|ton\b|quilos|carreta|truck|toco|bau|sider|saindo|origem|rio|sao|para|pra)/;
+    let m = acentuado.match(/\b(?:produto|mercadoria)\s*:?\s*([a-zà-ú][a-zà-ú ]{2,30}?)(?=\s*(?:\n|[,.;!]|$|\s(?:saindo|origem|de|do|da|para|pra|com|carreta|truck|toco|\d)))/);
+    if (!m) {
+      const re = /\bcarga\s+(?:de|do|da|com)\s+([a-zà-ú][a-zà-ú ]{2,40}?)(?=\s*(?:\n|[,.;!]|$|\s(?:saindo|origem|de|do|da|para|pra|com|no|na|carreta|truck|toco|carreg|\d)))/g;
+      let x;
+      while ((x = re.exec(acentuado))) { if (!PARA_PRODUTO.test(semAcento(x[1]))) { m = x; break; } }
+    }
     if (m) { c.produto = titulo(m[1].trim()); achados.produto = true; }
 
-    // rota: "RJ x Contagem/MG", "do Rio para Contagem", "origem ... destino ..."
-    const fimLocal = '(?=\\s*(?:\\n|[,.;!]|$|\\s(?:carreta|truck|toco|bitrem|rodotrem|bitruck|vuc|bau|sider|ate|carrega|descarrega|valor|r\\$|paga|pagamento|com|no|na|peso|\\d|ano|frete)\\b))';
-    const nomeLocal = '([a-z][a-z\\/\\- ]{1,40}?)';
+    // rota: vários jeitos de dizer
+    const FIM = '(?=\\s*(?:\\n|[,.;!|]|$)|\\s+(?:carga|carreg|descarreg|descarga|entreg|coleta|saida|carreta|truck|toco|bitrem|rodotrem|bitruck|vuc|bau|sider|grade|graneleiro|refriger|prancha|ate \\d|\\d|valor|frete|r\\$|paga|pix|peso|ano|rastread|escolt|mais|com|no |na |e )|$)';
+    const LUGAR = '([a-z][a-z\\/\\- ]{1,40}?)';
     const padroes = [
-      new RegExp('origem\\s*:?\\s*' + nomeLocal + '\\s*[,.;\\n]?\\s*destino\\s*:?\\s*' + nomeLocal + fimLocal),
-      new RegExp('(?:saindo\\s+d[eoa]\\s+|^|\\n|\\s)' + nomeLocal + '\\s+(?:x|para|pra|ate|destino|->|>|com destino a)\\s+' + nomeLocal + fimLocal)
+      new RegExp('origem\\s*:?\\s*' + LUGAR + '\\s*(?:[,.;\\n]|\\s)\\s*destino\\s*:?\\s*' + LUGAR + FIM),
+      new RegExp('(?:saindo|saida|partindo|sai)\\s+(?:de |do |da |dos |das )?' + LUGAR + '\\s+(?:para|pra|com destino a|destino|ate|indo para|indo pra|x)\\s+' + LUGAR + FIM),
+      new RegExp('\\b(?:de|do|da)\\s+' + LUGAR + '\\s+(?:para|pra|ate|x)\\s+' + LUGAR + FIM),
+      new RegExp('(?:^|\\n|\\s)' + LUGAR + '\\s+(?:x|->|>|\\u2192)\\s+' + LUGAR + FIM)
     ];
     for (const re of padroes) {
       const r = t.match(re);
       if (!r) continue;
-      const o = local(r[1].replace(/^(?:carga\s+(?:de|do|da)\s+[a-z]+\s+)/, '')), d = local(r[2]);
-      if (o && d && (o.uf || o.cidade) && (d.uf || d.cidade)) {
+      const o = local(r[1]), d = local(r[2]);
+      if (o && d && (o.uf || CIDADES[semAcento(o.cidade).toLowerCase()] || o.cidade.split(' ').length <= 4) && (d.uf || d.cidade.split(' ').length <= 4)) {
         c.origemCidade = o.cidade; c.origemUF = o.uf; c.destinoCidade = d.cidade; c.destinoUF = d.uf;
         achados.rota = true;
         break;
@@ -175,25 +205,38 @@
     else if ((m = t.match(/(\d{3,6})\s*(?:kg|quilos|kilos)/))) { c.pesoKg = +m[1]; achados.peso = true; }
 
     // valor: "R$ 4.500", "4500 reais", "frete de 4500"
-    m = t.match(/r\$\s*([\d.]+(?:,\d{1,2})?)/) || t.match(/(\d[\d.]*(?:,\d{1,2})?)\s*reais/) || t.match(/(?:frete|valor|paga|pagando)\s*(?:de|e|:)?\s*(\d[\d.]{2,}(?:,\d{1,2})?)/);
-    if (m) {
-      const v = parseFloat(m[1].replace(/\.(?=\d{3}\b)/g, '').replace(',', '.'));
-      if (v >= 100) { c.valorOferecido = v; achados.valor = true; }
+    const valores = [/r\$\s*([\d.]+(?:,\d{1,2})?)/, /(\d[\d.]{2,}(?:,\d{1,2})?)\s*(?:\+|mais|com|sem|fora)\s*(?:o\s*|os\s*)?pedagio/, /(?:frete|valor|pagando|paga|pago)\s*(?:de|do|e|:|em)?\s*(?:r\$\s*)?(\d[\d.]*(?:,\d{1,2})?)/, /(\d[\d.]*(?:,\d{1,2})?)\s*(?:reais|conto|contos|pila)/];
+    for (const re of valores) {
+      const x = t.match(re);
+      if (!x) continue;
+      const v = parseFloat(x[1].replace(/\.(?=\d{3}\b)/g, '').replace(',', '.'));
+      if (v >= 300) { c.valorOferecido = v; achados.valor = true; break; }
     }
-    if (/(?:\+|mais|fora|sem)\s*(?:os\s*)?pedagio|pedagio[s]?\s*(?:a parte|por fora|separado|pago a parte)|vale[- ]pedagio/.test(t)) { c.pedagioIncluso = false; achados.pedagio = true; }
-    else if (/(?:com|incluso|incluindo|ja com)\s*(?:o\s*)?pedagio|pedagio[s]?\s*incluso/.test(t)) { c.pedagioIncluso = true; achados.pedagio = true; }
+    if (/(?:com|incluso|incluindo|ja com)\s*(?:o\s*)?pedagio|pedagio[s]?\s*(?:incluso|incluido|ja incluso|ja incluido|ja esta)/.test(t)) { c.pedagioIncluso = true; achados.pedagio = true; }
+    else if (/(?:\+|mais|fora|sem)\s*(?:o\s*|os\s*)?pedagio|pedagio[s]?\s*(?:a parte|por fora|separado|pago a parte|por conta|do motorista|nao incluso|fica por fora)|vale[- ]pedagio/.test(t)) { c.pedagioIncluso = false; achados.pedagio = true; }
 
     m = t.match(/(\d{1,3}\s*%\s*(?:\+|e|mais)\s*\d{1,3}\s*%)/) || t.match(/pagamento\s*:?\s*([^\n]{2,60})/);
     if (m) {
-      c.pagamento = m[1].split(/\s(?:veiculo|rastread|escolt|carga|carrega|descarrega|valor|frete|ano)\b/)[0].replace(/\s*(?:\+|\be\b|mais)\s*/g, ' + ').replace(/\s+/g, ' ').trim().replace(/[.;]$/, '');
+      c.pagamento = m[1].split(/\s(?:veiculo|rastread|escolt|valor|frete|ano\s|carreta|truck|toco|r\$|mais pedagio|pedagio|com pedagio|saindo|origem)/)[0].replace(/\s*(?:\+|\be\b|mais)\s*/g, ' + ').replace(/\s+/g, ' ').trim().replace(/[.;]$/, '');
       achados.pagamento = true;
     }
 
-    m = t.match(/\b(?<!des)carreg\w*\s*(?:no|na|em|para|pra|:)?\s*([^\n|,.;]{2,25}?)(?=\s*(?:descarreg|entreg|valor|r\$|frete|pagamento|\n|[|,.;]|$))/);
-    if (m) { c.dataCarregamento = data(m[1], hoje); if (c.dataCarregamento) achados.carregamento = true; }
-    m = t.match(/\bdescarreg\w*\s*(?:no|na|dia|em|para|pra|:)?\s*([^\n|,.;]{2,25})/) || t.match(/\bentrega\w*\s*(?:no|na|dia|em|para|pra|:)?\s*([^\n|,.;]{2,25})/);
-    if (m) { c.dataDescarga = data(m[1], hoje, c.dataCarregamento); if (c.dataDescarga) achados.descarga = true; }
+    const janela = (re, corte) => {
+      const x = re.exec(t);
+      if (!x) return null;
+      let resto = t.slice(x.index + x[0].length, x.index + x[0].length + 45);
+      if (corte) { const k = resto.search(corte); if (k >= 0) resto = resto.slice(0, k); }
+      return resto;
+    };
+    const jc = janela(/\b(?:carreg\w*|coleta\w*|retirada)/, /descarreg|descarga|entreg/);
+    if (jc) { c.dataCarregamento = data(jc, hoje); if (c.dataCarregamento) achados.carregamento = true; }
+    const jd = janela(/\b(?:descarreg\w*|descarga|entreg\w*)/, /(?<!des)carreg|coleta|saida|saindo/);
+    if (jd) { c.dataDescarga = data(jd, hoje, c.dataCarregamento); if (c.dataDescarga) achados.descarga = true; }
 
+    if (!c.pagamento) {
+      const pg = t.match(/\b([1-9]0)\s?([1-9]0)\b(?!\s*(?:reais|r\$|t\b|ton|kg))/);
+      if (pg && +pg[1] + +pg[2] === 100) { c.pagamento = pg[1] + '% + ' + pg[2] + '%'; achados.pagamento = true; }
+    }
     if (/rastread|rastreador|rastreio|rastreamento/.test(t)) { c.exigeRastreador = true; achados.rastreador = true; }
     if (/escolt/.test(t)) { c.escolta = true; achados.escolta = true; }
 
