@@ -456,7 +456,7 @@
           '<td><b>' + esc(c.origemUF) + ' → ' + esc(c.destinoUF) + '</b><div class="miudo">' + esc(c.origemCidade || c.origemUF) + ' → ' + esc(c.destinoCidade || c.destinoUF) + '</div></td>' +
           '<td>' + (esc(c.cliente) || '<span class="miudo">não informado</span>') + (c.produto ? '<div class="miudo">' + esc(c.produto) + '</div>' : '') + '</td><td class="num">' + U.toneladas(c.pesoKg) + '</td>' +
           '<td class="num">' + (c.valorOferecido ? U.moeda(c.valorOferecido) + '<div class="miudo">' + (c.pedagioIncluso ? 'c/ pedágio' : 's/ pedágio') + '</div>' : '<span class="miudo">a combinar</span>') + '</td>' +
-          '<td><span class="etq ' + (c.status === 'aberta' ? 'azul' : c.status === 'fechada' ? 'verde' : c.status === 'rascunho' ? 'amarelo' : 'cinza') + '">' + ({ aberta: 'Aberta', fechada: 'Fechada', cancelada: 'Cancelada', rascunho: 'Rascunho' }[c.status] || c.status) + '</span></td>' +
+          '<td>' + (c.status === 'aberta' && c.dataCarregamento && c.dataCarregamento < Date.now() - 86400000 ? '<span class="etq vermelho">Data passada</span>' : '<span class="etq ' + (c.status === 'aberta' ? 'azul' : c.status === 'fechada' ? 'verde' : c.status === 'rascunho' ? 'amarelo' : 'cinza') + '">' + ({ aberta: 'Aberta', fechada: 'Fechada', cancelada: 'Cancelada', rascunho: 'Rascunho' }[c.status] || c.status) + '</span>') + '</td>' +
           (soCargas() ? '</tr>' : '<td class="num">' + (c.status === 'aberta' ? n : '—') + '</td>' +
           '<td class="num">' + (function () { const q = P.interesses.filter((i) => i.cargaId === c.id && i.status !== 'descartado'); const novos = q.filter((i) => i.status === 'novo').length; return q.length ? q.length + (novos ? ' <span class="etq laranja">' + novos + ' novo' + (novos > 1 ? 's' : '') + '</span>' : '') : '—'; })() + '</td></tr>');
       }).join('') + '</tbody></table>';
@@ -489,6 +489,7 @@
       '<div class="det-sub">' + [esc(c.produto ? 'Carga de ' + c.produto.toLowerCase() : ''), esc(c.cliente)].filter(Boolean).join(' · ') + '</div></div>' +
       '<div class="det-contatos">' + (soCargas() ? '' : (c.status === 'rascunho' ? bt('editar-carga', 'Revisar e publicar', 'btn-primario') : bt('editar-carga', 'Editar')) + (c.status === 'aberta' || c.status === 'rascunho' ? bt('cancelar-carga', c.status === 'rascunho' ? 'Descartar' : 'Cancelar carga', 'btn-fantasma btn-perigo') : '')) + '</div></div>' +
       (c.status === 'rascunho' ? '<div class="det-alerta" style="margin-top:12px">Rascunho lançado por áudio: ainda não aparece para os motoristas. Revise e publique.</div>' : '') +
+      (c.status === 'aberta' && c.dataCarregamento && c.dataCarregamento < Date.now() - 86400000 ? '<div class="det-alerta" style="margin-top:12px">A data de carregamento (' + new Date(c.dataCarregamento).toLocaleDateString('pt-BR') + ') já passou, por isso esta carga não aparece para os motoristas. Clique em Editar e corrija a data.</div>' : '') +
       '<dl class="det-grade" style="margin-top:18px">' +
       '<div><dt>Origem</dt><dd>' + esc(lugar(c.origemCidade, c.origemUF)) + '</dd></div>' +
       '<div><dt>Destino</dt><dd>' + esc(lugar(c.destinoCidade, c.destinoUF)) + '</dd></div>' +
@@ -770,6 +771,15 @@
       '<label class="campo"><span>Observações internas</span><textarea name="obs">' + esc(c.obs || '') + '</textarea><small>Só a equipe vê.</small></label>' + rodape(rascunho ? 'Publicar carga' : 'Salvar carga'),
       async (f) => {
         if (!f.ou.value || !f.du.value) throw new Error('Escolha a UF de origem e a de destino.');
+        const ontem = Date.now() - 86400000, anoAtual = new Date().getFullYear();
+        const confere = (campo, rot) => {
+          if (!f[campo].value) return;
+          const d = new Date(f[campo].value + 'T08:00');
+          if (d.getFullYear() < anoAtual - 1 || d.getFullYear() > anoAtual + 1) throw new Error('A data de ' + rot + ' está com o ano ' + d.getFullYear() + '. Digite a data com o ano certo.');
+          if (campo === 'data' && d.getTime() < ontem && !confirm('A data de carregamento já passou. Cargas com data no passado não aparecem para os motoristas. Salvar assim mesmo?')) throw new Error('Ajuste a data de carregamento.');
+        };
+        confere('data', 'carregamento'); confere('descarga', 'descarga');
+        if (f.data.value && f.descarga.value && f.descarga.value < f.data.value) throw new Error('A descarga está antes do carregamento.');
         const salva = await SV.salvarCarga(Object.assign({}, c, {
           status: rascunho || !c.status ? 'aberta' : c.status,
           produto: f.produto.value.trim(), tipoVeiculo: f.tipo.value, pagamento: f.pagamento.value.trim(),
