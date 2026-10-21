@@ -166,11 +166,12 @@
       '<form id="f-veic" novalidate>' +
       '<div class="campo"><span>Veículo</span>' + chips('tipo', SV.VEICULOS, v.tipo) + '</div>' +
       '<div class="campo"><span>Carroceria</span>' + chips('carroceria', SV.CARROCERIAS, v.carroceria) + '</div>' +
+      '<p class="miudo" style="margin:-.4rem 0 1rem">Todos os campos são obrigatórios.</p>' +
       '<div class="linha-campos">' +
       '<label class="campo"><span>Capacidade (toneladas)</span><input name="cap" inputmode="decimal" placeholder="28" value="' + (v.capacidadeKg ? String(v.capacidadeKg / 1000).replace('.', ',') : '') + '"></label>' +
-      '<label class="campo"><span>Ano</span><input name="ano" inputmode="numeric" maxlength="4" placeholder="2019" value="' + esc(v.ano || '') + '"></label>' +
+      '<label class="campo"><span>Ano</span><input name="ano" inputmode="numeric" maxlength="4" required placeholder="2019" value="' + esc(v.ano || '') + '"></label>' +
       '</div>' +
-      '<label class="campo"><span>Placa</span><input name="placa" autocapitalize="characters" maxlength="8" placeholder="ABC1D23" value="' + esc(v.placa || '') + '"></label>' +
+      '<label class="campo"><span>Placa</span><input name="placa" autocapitalize="characters" maxlength="7" required placeholder="ABC1D23" value="' + esc(v.placa || '') + '"></label>' +
       '<label class="interruptor" style="margin-bottom:1.4rem">Tem rastreador<input type="checkbox" name="rastreador"' + (v.rastreador ? ' checked' : '') + '></label>' +
       '<button class="btn btn-primario btn-grande" type="submit">Salvar veículo</button>' +
       '</form></section>';
@@ -185,7 +186,10 @@
       const cap = parseFloat(f.cap.value.replace(',', '.'));
       if (!tipo) return aviso('Escolha o tipo de veículo.', true);
       if (!carroceria) return aviso('Escolha a carroceria.', true);
-      if (!cap || cap <= 0 || cap > 80) return aviso('Informe a capacidade em toneladas.', true);
+      if (!cap || cap <= 0 || cap > 80) { f.cap.classList.add('erro-campo'); return aviso('Informe a capacidade em toneladas.', true); }
+      const ano = parseInt(f.ano.value, 10), anoMax = new Date().getFullYear() + 1;
+      if (!ano || ano < 1970 || ano > anoMax) { f.ano.classList.add('erro-campo'); return aviso('Informe o ano do veículo (ex.: 2019).', true); }
+      if (!/^[A-Z]{3}[0-9][A-Z0-9][0-9]{2}$/.test(f.placa.value.trim())) { f.placa.classList.add('erro-campo'); return aviso('Informe a placa completa (ex.: ABC1D23 ou ABC1234).', true); }
       travar(f, 'Salvando…');
       try {
         const salvo = await SV.salvarVeiculo(Object.assign({}, E.editVeiculo, {
@@ -243,10 +247,26 @@
       '<small>' + (temAtivo ? 'Mudou de cidade ou de rota? Atualize.' : 'Toque para avisar a Severo') + '</small>' +
       '<span class="caminhao">' + IC.caminhao.replace('stroke-width="2"', 'stroke-width="1.4"') + '</span></button>' +
       '<p class="promessa">Ficou vazio? Avise a Severo. Nosso time busca sua próxima carga.</p></div>' +
+      blocoPush() +
       vitrineInicio() +
       '<div class="central"><span class="miudo">Central Severo<br>' + esc(C.centralHorario || '') + '</span>' +
       '<a class="btn btn-p" href="https://wa.me/' + U.soDigitos(C.centralWhatsApp) + '" target="_blank" rel="noopener">' + IC.zap + 'WhatsApp</a></div>' +
       '</section>';
+  }
+
+  /* ----- notificações ----- */
+  function blocoPush() {
+    if (SV.modo !== 'firebase' || SV.pushAtivo() || localStorage.getItem('sv_push_depois')) return '';
+    const depois = '<button class="btn btn-p btn-fantasma" data-acao="push-depois">Agora não</button>';
+    if (SV.iphoneSemInstalar()) {
+      return '<div class="cartao push-card"><b>Receba avisos de proposta e de cargas</b>' +
+        '<p class="miudo">No iPhone, as notificações só funcionam com o app na Tela de Início: no Safari, toque em Compartilhar e em <b>Adicionar à Tela de Início</b>. Depois abra o app pelo ícone.</p>' +
+        '<div class="audio-acoes">' + depois + '</div></div>';
+    }
+    if (!SV.pushSuportado() || Notification.permission === 'denied') return '';
+    return '<div class="cartao push-card"><b>Receba avisos no celular</b>' +
+      '<p class="miudo">Proposta chegou, carga fechada, nova carga para o seu veículo. Mesmo com o app fechado.</p>' +
+      '<div class="audio-acoes"><button class="btn btn-primario btn-p" style="flex:1;min-height:46px" data-acao="ativar-push">Ativar notificações</button>' + depois + '</div></div>';
   }
 
   /* ----- cargas disponíveis ----- */
@@ -395,6 +415,11 @@
       if (navigator.vibrate) navigator.vibrate(8);
     });
     f.addEventListener('submit', (e) => { e.preventDefault(); enviar(f); });
+    // ao tocar em um campo, ele sobe para cima do teclado
+    f.addEventListener('focusin', (e) => {
+      if (!/INPUT|TEXTAREA|SELECT/.test(e.target.tagName)) return;
+      setTimeout(() => e.target.scrollIntoView({ block: 'center', behavior: 'smooth' }), 300);
+    });
   }
 
   function lerFormulario(f) {
@@ -636,6 +661,8 @@
     const acao = b.dataset.acao;
     if (acao === 'vazio') {
       if (!veiculoAtual()) { E.editVeiculo = {}; return ir('veiculo'); }
+      const vv = veiculoAtual();
+      if (!vv.placa || !vv.ano || !vv.capacidadeKg) { E.editVeiculo = Object.assign({}, vv); aviso('Complete os dados do veículo para continuar.'); return ir('veiculo'); }
       E.form = novoForm();
       history.pushState({}, '');
       return ir('pedido');
@@ -688,6 +715,13 @@
       catch (err) { aviso(msgErro(err), true); }
       return;
     }
+    if (acao === 'ativar-push') {
+      b.disabled = true;
+      try { await SV.ativarPush('motoristas', E.eu.id, true); aviso('Pronto! Você vai receber os avisos da Severo.'); }
+      catch (err) { aviso(err.message, true); }
+      return desenhar();
+    }
+    if (acao === 'push-depois') { localStorage.setItem('sv_push_depois', '1'); return desenhar(); }
     if (acao === 'filtro-cargas') { E.filtroCargas = b.dataset.valor; return desenhar(); }
     if (acao === 'interesse') {
       const c = E.cargas.find((x) => x.id === b.dataset.id);
@@ -787,6 +821,7 @@
     if (!E.eu) return ir('cadastro');
     if (E.eu.bloqueado) { observar(); return ir('bloqueado'); }
     observar();
+    if (SV.pushAtivo()) SV.ativarPush('motoristas', E.eu.id, false).catch(() => {});
     enviarFila();
     setInterval(() => { if (E.tela === 'inicio' || E.tela === 'acompanhar') desenhar(); }, 60000);
   }

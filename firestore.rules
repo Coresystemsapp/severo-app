@@ -32,7 +32,7 @@ service cloud.firestore {
       // a própria pessoa só atualiza presença (visto, dispositivo, último acesso)
       allow update: if admin()
         || (logado() && eu() == uid
-            && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['id', 'vistoEm', 'ultimoAcesso', 'dispositivo', 'email']));
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['id', 'vistoEm', 'ultimoAcesso', 'dispositivo', 'email', 'pushTokens', 'pushEm']));
       allow create, delete: if admin();
     }
 

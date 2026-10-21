@@ -96,6 +96,7 @@
         '<button class="btn btn-p" data-acao="semear">Gerar dados de exemplo</button>' +
         '<button class="btn btn-p btn-fantasma" data-acao="limpar">Limpar demonstração</button>' +
         '<a class="btn btn-p btn-fantasma" href="./" target="_blank" rel="noopener">Abrir app do motorista</a>' : '') +
+      (SV.pushSuportado() && Notification.permission !== 'granted' ? '<button class="btn btn-p" data-acao="ativar-push">Ativar notificações</button>' : '') +
       '<div class="pn-op"><b>' + esc(P.op.nome) + '</b><span>' + esc(rotPapel) + (P.op.email ? '<br>' + esc(P.op.email) : '') + '</span></div>' +
       '<button class="btn btn-p btn-fantasma" data-acao="sair">' + IC.sair + 'Sair</button>' +
       '</div></aside>' +
@@ -105,6 +106,7 @@
     P.parar.forEach((f) => f());
     clearInterval(P.tPresenca);
     SV.presenca(P.op, true).catch(() => {});
+    if (SV.pushAtivo()) SV.ativarPush('usuarios', P.op.id, false).catch(() => {});
     P.tPresenca = setInterval(() => { if (P.op) SV.presenca(P.op).catch(() => {}); }, 120000);
     const obsCargas = SV.observarCargas((l) => {
         P.cargas = l.sort((a, b) => (a.dataCarregamento || 0) - (b.dataCarregamento || 0));
@@ -795,6 +797,12 @@
         }));
         P.selCarga = salva.id;
         atualizar();
+        // carga nova no ar: avisa quem está vazio e encaixa
+        if ((!c.id || rascunho) && salva.status === 'aberta' && salva.visivelApp !== false) {
+          const ids = P.fila.filter((d) => SV.ATIVOS.includes(d.status) && !SV.vencida(d) && SV.compatibilidade(d, salva).ok).map((d) => d.motoristaId);
+          const rota = (salva.origemCidade || salva.origemUF) + ' → ' + (salva.destinoCidade || salva.destinoUF);
+          SV.avisarMotoristas(Array.from(new Set(ids)), 'Nova carga para o seu veículo', rota + (salva.valorOferecido ? ' · ' + U.moeda(salva.valorOferecido) : '') + '. Toque para ver.', 'carga-' + salva.id);
+        }
         aviso(rascunho ? 'Carga publicada. Já aparece no app dos motoristas.' : 'Carga salva.');
       });
   }
@@ -977,6 +985,11 @@
       if (acao === 'semear') { await SV.semearDemo(); return aviso('Dados de exemplo criados.'); }
       if (acao === 'limpar') { if (confirm('Apagar todos os dados de demonstração deste navegador?')) { SV.limparDemo(); P.sel = null; aviso('Demonstração limpa.'); } return; }
       if (acao === 'exportar') return exportar();
+      if (acao === 'ativar-push') {
+        try { await SV.ativarPush('usuarios', P.op.id, true); aviso('Notificações ativadas neste computador.'); b.remove(); }
+        catch (err) { aviso(err.message, true); }
+        return;
+      }
       if (acao === 'nova-carga') return dlgCarga();
       if (acao === 'carga-voz') return dlgVoz(false);
       if (acao === 'carga-colar') return dlgVoz(true);

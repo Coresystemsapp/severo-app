@@ -1,0 +1,11 @@
+{
+  "name": "severo-app",
+  "private": true,
+  "description": "Severo · Seu próximo frete. Páginas estáticas + função /api/notificar no Vercel.",
+  "dependencies": {
+    "firebase-admin": "12.7.0"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

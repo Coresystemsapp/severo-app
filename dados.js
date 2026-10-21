@@ -20,6 +20,8 @@
   const VALIDADE_H = cfg.validadeHoras || 12;
   const VALIDADE_MS = VALIDADE_H * 3600 * 1000;
   const FB = 'https://www.gstatic.com/firebasejs/10.12.2/';
+  // chave pública das notificações (Firebase > Cloud Messaging > Certificados push da Web)
+  const VAPID = cfg.vapidKey || 'BBSgLlZgcl4Q0ddbMwGdU3Or6Kdr3TLel9ESXgxhdD0MIcEnpwLiiSzImswUBM8lDV4GkIvgCzYMvY_k--Axa60';
 
   /* ---------- vocabulário do negócio ---------- */
   const STATUS = {
@@ -208,6 +210,9 @@
         return id;
       },
       async redefinirSenha() { /* demo: nada a enviar */ },
+      async idToken() { return null; },
+      async pushToken() { return null; },
+      async salvarToken() { /* demo: sem notificações */ },
       recentes(c, campo, n, cb) {
         return this.observar(c, null, (l) => cb(l.sort((a, b) => (b[campo] || 0) - (a[campo] || 0)).slice(0, n)));
       },
@@ -320,6 +325,15 @@
         return uid;
       },
       async redefinirSenha(email) { await auth.sendPasswordResetEmail(email); },
+      async idToken() { return auth.currentUser ? auth.currentUser.getIdToken() : null; },
+      async pushToken(reg) {
+        if (!firebase.messaging) await carregarScript(FB + 'firebase-messaging-compat.js');
+        if (!(await firebase.messaging.isSupported())) return null;
+        return app.messaging().getToken({ vapidKey: VAPID, serviceWorkerRegistration: reg });
+      },
+      async salvarToken(c, id, token) {
+        await col(c).doc(id).set({ pushTokens: firebase.firestore.FieldValue.arrayUnion(token), pushEm: agora() }, { merge: true });
+      },
       async excluir(c, id) { await col(c).doc(id).delete(); },
       observarDoc(c, id, cb) {
         return col(c).doc(id).onSnapshot((s) => cb(s.exists ? Object.assign({ id: s.id }, s.data()) : null), (e) => console.error('[Severo] leitura de ' + c, e));
@@ -345,6 +359,41 @@
     async iniciar(nomeApp) {
       M = DEMO ? motorDemo() : await motorFirebase(nomeApp || 'motorista');
       return SV;
+    },
+
+    /* ----- notificações (Firebase Cloud Messaging + função do Vercel) ----- */
+    pushSuportado() {
+      return SV.modo === 'firebase' && 'serviceWorker' in navigator && 'PushManager' in window && 'Notification' in window;
+    },
+    iphoneSemInstalar() {
+      return /iPhone|iPad|iPod/.test(navigator.userAgent) && !(navigator.standalone || (window.matchMedia && matchMedia('(display-mode: standalone)').matches));
+    },
+    pushAtivo() { return SV.pushSuportado() && Notification.permission === 'granted'; },
+    /** Pede permissão (pedir=true, só em toque do usuário) e registra o aparelho. */
+    async ativarPush(colecao, id, pedir) {
+      if (!SV.pushSuportado()) throw new Error(SV.iphoneSemInstalar() ? 'No iPhone, adicione o app à Tela de Início para receber notificações.' : 'Este navegador não recebe notificações.');
+      if (pedir) {
+        const p = await Notification.requestPermission();
+        if (p !== 'granted') throw new Error('Notificações bloqueadas. Libere nas configurações do navegador.');
+      } else if (Notification.permission !== 'granted') return false;
+      const reg = await navigator.serviceWorker.register('/sw.js');
+      await navigator.serviceWorker.ready;
+      const token = await M.pushToken(reg);
+      if (!token) throw new Error('Este navegador não recebe notificações.');
+      await M.salvarToken(colecao, id, token);
+      return true;
+    },
+    /** Dispara pela função /api/notificar. Nunca trava o app se falhar. */
+    notificar(corpo) {
+      if (SV.modo !== 'firebase') return;
+      M.idToken().then((tk) => {
+        if (!tk) return;
+        return fetch('/api/notificar', { method: 'POST', keepalive: true, headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + tk }, body: JSON.stringify(corpo) });
+      }).catch(() => {});
+    },
+    avisarMotoristas(ids, titulo, corpo, tag) {
+      const lista = (ids || []).filter(Boolean);
+      if (lista.length) SV.notificar({ motoristas: lista, titulo: titulo, corpo: corpo, link: '/', tag: tag || '' });
     },
 
     /* ----- motorista ----- */
@@ -411,6 +460,7 @@
           status: 'disponivel', criadoEm: agora(), responsavelId: null, responsavelNome: null,
           historico: [evento('Pedido enviado pelo motorista', null, 'motorista')]
         }));
+        SV.notificar({ evento: 'novo_pedido', dispId: id });
       }
       return id;
     },
@@ -460,8 +510,8 @@
     observarCargas(cb) { return M.observar('cargas', null, cb); },
 
     /** Assumir é transacional: dois operadores não ficam com o mesmo pedido. */
-    assumir(d, op, transferir) {
-      return M.atualizarCom('disponibilidades', d.id, (x) => {
+    async assumir(d, op, transferir) {
+      const r = await M.atualizarCom('disponibilidades', d.id, (x) => {
         if (x.responsavelId && x.responsavelId !== op.id && !transferir) {
           throw new Error(x.responsavelNome + ' já assumiu este pedido.');
         }
@@ -472,6 +522,8 @@
         if (x.status === 'disponivel') { patch.status = 'em_atendimento'; patch.assumidoEm = agora(); }
         return patch;
       });
+      if (d.status === 'disponivel') SV.avisarMotoristas([d.motoristaId], 'A Severo está buscando sua carga', op.nome.split(' ')[0] + ' assumiu o seu pedido e já está procurando carga para a sua rota.', 'pedido-' + d.id);
+      return r;
     },
     async mudarStatus(d, status, op, texto) {
       return M.atualizarCom('disponibilidades', d.id, (x) => {
@@ -484,6 +536,15 @@
         if (status === 'carga_fechada') patch.fechadoEm = agora();
         if (status === 'carregado') patch.carregadoEm = agora();
         return patch;
+      }).then((r) => {
+        const avisos = {
+          aguardando_aprovacao: ['Proposta aceita', 'Estamos conferindo documentos e aprovando a operação.'],
+          carga_fechada: ['Carga fechada!', 'Tudo certo. Siga as orientações do operador para o carregamento.'],
+          sem_carga: ['Sem carga desta vez', 'Não encontramos carga para essa rota agora. Avise de novo quando quiser.'],
+          cancelado: ['Pedido encerrado', 'Seu aviso foi encerrado pela central. Quando ficar vazio de novo, é só avisar.']
+        };
+        if (avisos[status]) SV.avisarMotoristas([d.motoristaId], avisos[status][0], avisos[status][1], 'pedido-' + d.id);
+        return r;
       });
     },
     async atendimento(dispId) { return (await M.obter('atendimentos', dispId)) || { id: dispId, notas: [], recusas: [] }; },
@@ -503,6 +564,7 @@
         status: 'proposta_enviada', respostaMotorista: null, contraproposta: null, atualizadoEm: agora(),
         historico: (x.historico || []).concat(evento('Proposta enviada ao motorista', op, 'status'))
       }));
+      SV.avisarMotoristas([d.motoristaId], 'Você recebeu uma proposta', util.moeda(n.repasse) + (n.rota ? ' · ' + n.rota : '') + '. Toque para aceitar, negociar ou recusar.', 'pedido-' + d.id);
     },
     async registrarRecusa(d, op, motivo, obs) {
       const a = await SV.atendimento(d.id);
@@ -572,8 +634,9 @@
     observarCargasPublicas(cb) { return M.observar('cargasPublicas', null, cb); },
     observarMeusInteresses(motoristaId, cb) { return M.observar('interesses', ['motoristaId', motoristaId], cb); },
     observarInteresses(cb) { return M.observar('interesses', null, cb); },
-    registrarInteresse(carga, motorista, veiculo, negociacao) {
+    async registrarInteresse(carga, motorista, veiculo, negociacao) {
       const id = carga.id + '_' + motorista.id;
+      setTimeout(() => SV.notificar({ evento: 'interesse', interesseId: id }), 400);
       return M.gravar('interesses', id, {
         cargaId: carga.id, motoristaId: motorista.id, motoristaNome: motorista.nome, telefone: motorista.telefone,
         veiculo: veiculo ? { tipo: veiculo.tipo, carroceria: veiculo.carroceria, capacidadeKg: veiculo.capacidadeKg || null, placa: veiculo.placa || '', ano: veiculo.ano || null, rastreador: !!veiculo.rastreador } : null,
@@ -586,7 +649,8 @@
     },
 
     /** Motorista pede outro valor: a proposta fica em negociação até a central responder. */
-    negociarProposta(d, valor, mensagem) {
+    async negociarProposta(d, valor, mensagem) {
+      setTimeout(() => SV.notificar({ evento: 'resposta', dispId: d.id }), 600);
       return M.atualizarCom('disponibilidades', d.id, (x) => {
         if (x.status !== 'proposta_enviada') throw new Error('Esta proposta não está mais aberta.');
         return {
@@ -607,10 +671,11 @@
         proposta: Object.assign({}, x.proposta || {}, { valorParceiro: valor }),
         status: 'aguardando_aprovacao', atualizadoEm: agora(),
         historico: (x.historico || []).concat(evento('Severo aceitou o valor de ' + util.moeda(valor), op, 'status'))
-      }));
+      })).then((r) => { SV.avisarMotoristas([d.motoristaId], 'A Severo aceitou o seu valor', util.moeda(valor) + '. Agora é só a aprovação dos documentos.', 'pedido-' + d.id); return r; });
     },
     /** Resposta do motorista à proposta, pelo próprio app. */
-    responderProposta(d, aceita, motivo, obs) {
+    async responderProposta(d, aceita, motivo, obs) {
+      setTimeout(() => SV.notificar({ evento: 'resposta', dispId: d.id }), 600);
       return M.atualizarCom('disponibilidades', d.id, (x) => {
         if (x.status !== 'proposta_enviada') throw new Error('Esta proposta não está mais aberta.');
         const resposta = { aceita: !!aceita, motivo: motivo || '', obs: obs || '', em: agora() };

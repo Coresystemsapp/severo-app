@@ -144,8 +144,9 @@ button { cursor: pointer; }
 
 /* ---------- aviso flutuante ---------- */
 .aviso {
-  position: fixed; left: 50%; bottom: calc(18px + env(safe-area-inset-bottom, 0px)); z-index: 50;
-  transform: translate(-50%, 140%); width: max-content; max-width: min(440px, calc(100% - 32px));
+  position: fixed; left: 50%; top: calc(12px + env(safe-area-inset-top, 0px)); z-index: 60;
+  transform: translate(-50%, calc(-100% - 40px)); width: max-content; max-width: min(440px, calc(100% - 32px));
+  pointer-events: none; line-height: 1.35; text-align: center;
   padding: .85rem 1.1rem; border-radius: var(--r-m); background: var(--placa); color: var(--asfalto);
   font-weight: 600; box-shadow: 0 14px 40px -10px rgba(0,0,0,.6); transition: transform .3s cubic-bezier(.2,.9,.3,1.2);
 }
@@ -223,7 +224,7 @@ button { cursor: pointer; }
 .exemplo-audio { margin: .8rem 0 0; font-size: .9rem; color: var(--texto-3); font-style: italic; }
 
 .rodape-fixo {
-  position: fixed; left: 0; right: 0; bottom: 0; z-index: 10;
+  position: sticky; bottom: 0; z-index: 10; margin: 1.2rem -20px 0;
   padding: 14px 20px calc(14px + env(safe-area-inset-bottom, 0px));
   background: linear-gradient(to top, var(--asfalto) 70%, rgba(17,24,33,0));
 }
@@ -354,7 +355,7 @@ button { cursor: pointer; }
 .tabela tr.clicavel:hover td { background: var(--cabine); }
 .tabela tr[aria-current="true"] td { background: var(--cabine-2); }
 
-dialog.dlg { width: min(560px, calc(100% - 32px)); max-height: calc(100% - 48px); padding: 0; border: 1px solid var(--linha); border-radius: 18px; background: var(--cabine); color: var(--texto); }
+dialog.dlg { width: min(560px, calc(100% - 32px)); max-height: calc(100% - 48px); max-height: calc(100dvh - 32px); overflow-y: auto; -webkit-overflow-scrolling: touch; overscroll-behavior: contain; padding: 0; border: 1px solid var(--linha); border-radius: 18px; background: var(--cabine); color: var(--texto); }
 dialog.dlg::backdrop { background: rgba(5,8,12,.7); backdrop-filter: blur(3px); }
 .dlg form { padding: 22px 24px; }
 .dlg h2 { font: 700 1.6rem/1.1 var(--f-display); margin: 0 0 16px; }
@@ -432,3 +433,5 @@ dialog.dlg::backdrop { background: rgba(5,8,12,.7); backdrop-filter: blur(3px); 
 .voz-prev { display:flex; flex-wrap:wrap; gap:6px; min-height:10px; margin:-4px 0 12px }
 .voz-chip { padding:.3rem .65rem; border-radius:999px; font-size:.85rem; background:var(--azul-tinta); color:var(--azul); font-weight:600 }
 .dlg .grade3 { grid-template-columns: 1.6fr .8fr 1.1fr; }
+.push-card { margin: 0 0 1rem; border-color: var(--azul); background: linear-gradient(var(--azul-tinta), var(--azul-tinta)), var(--cabine); }
+.push-card p { margin: .35rem 0 .8rem; }
